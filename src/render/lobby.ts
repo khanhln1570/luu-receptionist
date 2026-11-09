@@ -362,15 +362,16 @@ function buildShell(theme: LobbyTheme, obstacles: Rect[]): Group {
       g.add(box(0.8, 0.22, 0.8, 0xf4eee0, x, 4.3, z), box(0.7, 0.1, 0.7, KIT.gold, x, 4.14, z));
     }
     for (const [x, z] of [[0, -4.5], [-4.5, -5.5], [4.5, -5.5]] as const) g.add(chandelier(x, z));
-    for (const [x, z] of [[-6.9, -5.6], [6.9, -5.6], [-1.9, -9.3], [1.9, -9.3]] as const) {
+    // Chậu cây đứng hai đầu quầy lễ tân, tránh đèn đứng và cột ở tường
+    for (const [x, z] of [[-5.6, 1.5], [5.6, 1.5]] as const) {
       obstacles.push(around(x, z, 0.45));
-      g.add(buildPlant('ficus', x, z, x === -1.9 || x === 1.9 ? 1 : 1.1));
+      g.add(buildPlant('ficus', x, z, 1.1));
     }
   } else {
     g.add(buildPanorama());
     g.add(buildCounterTop(0xe8d3a9, 0x2a9fb0));
     for (const [x, z] of [[-4.5, -4.5], [0, -5], [4.5, -4.5]] as const) g.add(pendant(x, z));
-    for (const [x, z, k] of [[-7, -9, 1.3], [7, -9, 1.3], [-7, -3.4, 1], [7, -3.4, 1]] as const) {
+    for (const [x, z, k] of [[-5.7, 1.5, 1.3], [5.7, 1.5, 1.3]] as const) {
       obstacles.push(around(x, z, 0.4));
       g.add(buildPlant('palm', x, z, k));
     }

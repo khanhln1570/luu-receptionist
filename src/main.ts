@@ -1,11 +1,15 @@
 import {
   Box3,
+  type AnimationAction,
+  LoopOnce,
+  LoopRepeat,
   Color,
   DirectionalLight,
   HemisphereLight,
   PCFShadowMap,
   PerspectiveCamera,
   Scene,
+  Vector3,
   WebGLRenderer,
 } from 'three';
 import { autoStep } from './core/autopilot';
@@ -24,7 +28,7 @@ import { RECEPTIONIST } from './data/looks';
 import { OWNER_VISITS, pickOwnerVisit } from './data/ownerVisits';
 import { REGULARS } from './data/regulars';
 import { STORIES } from './data/story';
-import { createCharacter, type Character } from './render/characters';
+import { createCharacter, loadClips, type Character } from './render/characters';
 import scenarioData from './data/scenarios.json';
 import { GuestScene } from './render/guestScene';
 import { buildLobby, type Lobby } from './render/lobby';
@@ -51,7 +55,14 @@ const sun = new DirectionalLight(0xfff1dc, 1.6);
 sun.position.set(6, 10, 4);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 30 });
+Object.assign(sun.shadow.camera, {
+  left: -12,
+  right: 12,
+  top: 12,
+  bottom: -12,
+  near: 1,
+  far: 30,
+});
 scene.add(sun);
 
 let street: Street | null = null;
@@ -75,6 +86,118 @@ void Street.build(HOTELS.map((h) => ({ id: h.id, name: h.name, theme: h.lobby })
 
 /** Lễ tân (nhân vật chính) đứng sau quầy, quay về phía khách ở quầy. */
 let receptionist: Character | null = null;
+let receptionistAsleep = false;
+
+/** Lễ tân nhảy vào đánh chung: đi vòng qua đầu quầy tới chỗ hai người đang đánh nhau, đánh một lúc rồi về chỗ. */
+const R_HOME = { x: -3, z: 2.55 };
+const R_ROUTE = [
+  { x: -5.6, z: 2.4 },
+  { x: -5.6, z: -1.2 },
+  { x: -1.7, z: -5.6 },
+];
+let rBrawl: {
+  phase: 'go' | 'fight' | 'back' | 'wait' | 'led';
+  path: Array<{ x: number; z: number }>;
+  anim: string;
+  jx: number;
+  fell?: boolean;
+  t?: number;
+} | null = null;
+const rClips = loadClips();
+let rAction: AnimationAction | null = null;
+let pendingQuit = false;
+async function receptionistAnim(name: string): Promise<void> {
+  if (!receptionist) return;
+  const clip = (await rClips).get(name);
+  if (!clip) return;
+  receptionist.mixer.stopAllAction(); // dừng cả Idle_A gốc, nếu không nó trộn với động tác mới và nhân vật không ngã hẳn
+  const act = receptionist.mixer.clipAction(clip).reset();
+  if (name.startsWith('Death')) {
+    act.setLoop(LoopOnce, 1);
+    act.clampWhenFinished = true;
+  } else act.setLoop(LoopRepeat, Infinity);
+  rAction = act.fadeIn(0.2).play();
+}
+function stepReceptionistBrawl(mode: 'fight' | 'stop' | null, arrest: 'wait' | 'led' | null, dt: number): boolean {
+  const joining = mode !== null;
+  if (!receptionist) return false;
+  const root = receptionist.root;
+  if (joining && !rBrawl) {
+    rBrawl = {
+      phase: 'go',
+      path: R_ROUTE.map((p) => ({ ...p })),
+      anim: '',
+      jx: 0,
+    };
+  } else if (!joining && rBrawl?.phase === 'fight' && arrest) {
+    rBrawl.phase = 'wait'; // bị cảnh sát bắt: đứng yên chờ bị áp giải
+  } else if (rBrawl?.phase === 'wait' && arrest === 'led') {
+    rBrawl.phase = 'led';
+    rBrawl.path = [{ x: 0, z: -9.3 }, { x: 0, z: -11.8 }];
+  } else if (!joining && rBrawl?.phase === 'fight') {
+    rBrawl.phase = 'back';
+    rBrawl.path = [...R_ROUTE]
+      .reverse()
+      .slice(1)
+      .concat([R_HOME])
+      .map((p) => ({ ...p }));
+  }
+  if (!rBrawl) return false;
+  const st = rBrawl;
+  const want = st.phase === 'fight' ? (mode === 'stop' || st.fell ? 'Death_A' : 'Hit_A') : st.phase === 'wait' ? 'Idle_B' : 'Walking_A';
+  if (want === 'Death_A') st.fell = true;
+  if (st.anim !== want) {
+    st.anim = want;
+    void receptionistAnim(want);
+  }
+  if (st.phase === 'fight') {
+    const j = want === 'Hit_A' ? Math.sin(performance.now() / 90) * 0.06 : 0;
+    root.position.x += j - st.jx;
+    st.jx = j;
+    root.rotation.y = Math.PI / 2;
+    if (guests) {
+      guests.joinArrived = true;
+      st.t = (st.t ?? 0) + dt;
+      if (st.t > (st.fell ? 4 : 3)) guests.joinDone = true; // ngã rồi nằm đủ lâu / đánh đủ lâu mới kết thúc
+    }
+    return true;
+  }
+  root.position.x -= st.jx;
+  st.jx = 0;
+  if (st.phase === 'wait') return true;
+  const next = st.path[0];
+  if (next) {
+    const dx = next.x - root.position.x;
+    const dz = next.z - root.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.08) st.path.shift();
+    else {
+      const k = Math.min(1, ((st.phase === 'led' ? 2 : 3) * dt) / d);
+      root.position.x += dx * k;
+      root.position.z += dz * k;
+      root.rotation.y = Math.atan2(dx, dz);
+    }
+  }
+  if (st.path.length === 0) {
+    if (st.phase === 'led') {
+      // Bị đưa ra ngoài phố: coi như nghỉ việc
+      rBrawl = null;
+      root.position.set(R_HOME.x, 0, R_HOME.z);
+      root.rotation.y = Math.PI;
+      void receptionistAnim('Idle_A');
+      pendingQuit = true;
+      return false;
+    }
+    if (st.phase === 'go') st.phase = 'fight';
+    else {
+      rBrawl = null;
+      root.rotation.y = Math.PI;
+      void receptionistAnim('Idle_A');
+      return false;
+    }
+  }
+  return true;
+}
 void createCharacter(RECEPTIONIST).then((c) => {
   const box = new Box3().setFromObject(c.root);
   c.root.scale.setScalar(1.65 / Math.max(0.1, box.max.y - box.min.y)); // cao hơn khách một chút
@@ -150,14 +273,26 @@ const ui = new UI(document.getElementById('ui')!, {
   scenarioList: () =>
     [...SCENARIOS, ...(hotel ? (OWNER_VISITS[hotel.id] ?? []) : [])].map((s) => ({
       id: s.id,
-      group: s.guest ? 'Chủ khách sạn ghé quầy' : { incident: 'Sự cố', overbooking: 'Đặt trùng phòng', special: 'Tình huống đặc biệt' }[s.type],
+      group: s.guest
+        ? 'Chủ khách sạn ghé quầy'
+        : {
+            incident: 'Sự cố',
+            overbooking: 'Đặt trùng phòng',
+            special: 'Tình huống đặc biệt',
+          }[s.type],
       preview: s.lines[0]!.replace(/\{\w+\}/g, '…'),
     })),
   onTrigger: (id) => (game ? game.triggerScenario(id) : { ok: false, error: 'Chưa vào ca làm' }),
   shopView: (hotelId) => ({
     hotel: HOTELS.find((h) => h.id === hotelId)?.name ?? '',
     money: save.money,
-    items: UPGRADES.map((u) => ({ id: u.id, name: u.name, description: u.description, price: u.price, owned: upgradesOf(save, hotelId).includes(u.id) })),
+    items: UPGRADES.map((u) => ({
+      id: u.id,
+      name: u.name,
+      description: u.description,
+      price: u.price,
+      owned: upgradesOf(save, hotelId).includes(u.id),
+    })),
   }),
   onBuy: (hotelId, upgradeId) => {
     const r = buyUpgrade(save, hotelId, upgradeId);
@@ -193,14 +328,27 @@ function menuCards(): MenuCard[] {
       state: !unlocked ? 'locked' : isCompleted(h, save) ? 'done' : 'open',
       lockReason: req ? `hoàn thành ${req.name}` : undefined,
       reputation: `${reputationLabel(reputationOf(save, h.id))} (${reputationOf(save, h.id)})`,
-      note: parked?.hotel.id === h.id ? (parked.game.isOver ? 'Ca hôm nay đã kết thúc, vào lại để xem tổng kết.' : `Ca đang làm dở lúc ${formatMinute(parked.game.clock.minute)}, vào lại để làm tiếp.`) : undefined,
+      note:
+        parked?.hotel.id === h.id
+          ? parked.game.isOver
+            ? 'Ca hôm nay đã kết thúc, vào lại để xem tổng kết.'
+            : `Ca đang làm dở lúc ${formatMinute(parked.game.clock.minute)}, vào lại để làm tiếp.`
+          : undefined,
     };
   });
 }
 
 /** Ra phố nhưng giữ ca đang làm dở (ca đã kết thúc thì không cần giữ). */
 function showMenu(): void {
-  if (game && hotel && shiftInfo && !game.isOver) parked = { game, hotel, recorded, day: shiftDay, info: shiftInfo, outcome: shiftOutcome };
+  if (game && hotel && shiftInfo && !game.isOver)
+    parked = {
+      game,
+      hotel,
+      recorded,
+      day: shiftDay,
+      info: shiftInfo,
+      outcome: shiftOutcome,
+    };
   leaveLobby();
 }
 
@@ -245,7 +393,11 @@ function startDay(hotelId: string): void {
   const seed = (Date.now() & 0x7fffffff) >>> 0;
   const regularVisits = pickRegularVisits(REGULARS, h.id, save.regulars, new Rng(seed ^ 0x2c1b3c6d));
   const ownerVisit = pickOwnerVisit(h.id, new Rng(seed ^ 0x4f1bbcdc));
-  game = new Game(dayConfigFor(h, save), seed, SCENARIOS, { regularVisits, ownerVisit, extraScenarios: Object.values(OWNER_VISITS).flat() });
+  game = new Game(dayConfigFor(h, save), seed, SCENARIOS, {
+    regularVisits,
+    ownerVisit,
+    extraScenarios: Object.values(OWNER_VISITS).flat(),
+  });
   shiftDay = progressOf(save, h.id).days + 1;
   shiftInfo = { hotelId: h.id, reputation: reputationOf(save, h.id), upgrades };
   ui.setGame(game, shiftDay, shiftInfo);
@@ -279,7 +431,12 @@ function finishDay(g: Game, h: HotelDef): { lines: string[]; beat: StoryBeat | n
   return { lines, beat };
 }
 
-const DONE_LABEL = { cleaning: 'đã dọn xong', repair: 'đã sửa xong', service: 'đã phục vụ xong', fix: 'đã xử lý xong' } as const;
+const DONE_LABEL = {
+  cleaning: 'đã dọn xong',
+  repair: 'đã sửa xong',
+  service: 'đã phục vụ xong',
+  fix: 'đã xử lý xong',
+} as const;
 
 showMenu();
 
@@ -307,14 +464,53 @@ canvas.addEventListener('pointermove', (ev) => {
   canvas.style.cursor = hit ? 'pointer' : '';
 });
 
+// Đồng hồ chung của thế giới: ngoài phố và trong khách sạn cùng một giờ, lưu lại để tải lại trang không mất.
+const CLOCK_KEY = 'luu-receptionist-clock';
+const WARP_MIN_PER_SEC = 30; // tua ngày đêm: một ngày đêm trong 48 giây
+let worldMinute = 8 * 60;
+try {
+  const v = Number(localStorage.getItem(CLOCK_KEY));
+  if (Number.isFinite(v) && v >= 0 && v < 24 * 60) worldMinute = v;
+} catch {
+  /* không có localStorage thì bắt đầu từ 08:00 */
+}
+let clockSavedAt = 0;
+const saveClock = (): void => {
+  try {
+    localStorage.setItem(CLOCK_KEY, String(Math.floor(worldMinute * 10) / 10));
+  } catch {
+    /* bỏ qua */
+  }
+};
+window.addEventListener('pagehide', saveClock);
+
+/** Giờ của thế giới: theo ca đang làm (ở sảnh hoặc đang giữ ca); không có ca thì trôi theo nhịp game; tua thì chạy nhanh. */
+function stepWorldClock(dt: number): void {
+  const shift = game ?? (parked && !parked.game.isOver ? parked.game : null);
+  if (!game && ui.streetWarp) worldMinute = (worldMinute + dt * WARP_MIN_PER_SEC) % (24 * 60);
+  else if (shift) worldMinute = shift.clock.minute % (24 * 60);
+  else if (!game) worldMinute = (worldMinute + dt * UI.MIN_PER_SEC) % (24 * 60);
+  else worldMinute = game.clock.minute % (24 * 60);
+  const now = performance.now();
+  if (now - clockSavedAt > 2000) {
+    clockSavedAt = now;
+    saveClock();
+  }
+}
+
 let last = performance.now();
 renderer.setAnimationLoop((now) => {
   const dt = Math.min((now - last) / 1000, 0.25); // tránh nhảy cóc khi tab bị ẩn
   last = now;
+  stepWorldClock(dt);
+  if (pendingQuit) {
+    pendingQuit = false;
+    quitShift();
+  }
   if (game && hotel) {
     if (ui.skipping) {
       // Tua nhanh từng phút game cho tới khi có khách chờ ở quầy hoặc hết ngày
-      for (let i = 0; i < 600 && !game.isOver && game.queue.waiting.length === 0 && !game.queue.current; i++) {
+      for (let i = 0; i < 600 && !game.isOver && game.queue.waiting.length === 0 && !game.queue.current && !game.sleepPrompt && !game.knock; i++) {
         const { arrived, left, finished } = game.tick(1);
         for (const g of arrived) ui.toast('Có khách mới đến quầy.', 'ok');
         for (const g of left) ui.toast('Một khách chờ lâu quá nên đã bỏ đi.', 'bad');
@@ -349,7 +545,7 @@ renderer.setAnimationLoop((now) => {
     // Màn phố
     if (street) {
       street.point(ui.streetFocus);
-      street.setWarp(ui.streetWarp);
+      street.setHour(worldMinute / 60);
       street.update(dt);
       ui.setStreetClock(street.hour);
       ui.placeStreetLabels(street.labels(canvas.clientWidth, canvas.clientHeight));
@@ -361,10 +557,49 @@ renderer.setAnimationLoop((now) => {
   if (receptionist) {
     const cur = game.queue.current;
     // Có khách ở quầy thì quay sang khách, không thì nhìn ra cửa
-    const target = cur ? Math.atan2(0 - receptionist.root.position.x, -1.5 - receptionist.root.position.z) : Math.PI;
-    const d = Math.atan2(Math.sin(target - receptionist.root.rotation.y), Math.cos(target - receptionist.root.rotation.y));
-    receptionist.root.rotation.y += d * Math.min(1, 5 * dt);
-    receptionist.mixer.update(dt);
+    const lying = game.asleep || !!guests?.robbery; // ngủ hoặc nằm dưới bàn vì có cướp
+    const brawling = !lying && stepReceptionistBrawl(guests?.joinMode ?? null, guests?.arrestStage ?? null, dt);
+    if (brawling) {
+      receptionist.mixer.update(dt);
+    } else if (lying) {
+      // Ngủ / nằm im: nằm ngửa ngay cạnh chân quầy, đầu hướng sang phải
+      if (!receptionistAsleep) {
+        receptionistAsleep = true;
+        receptionist.root.rotation.order = 'YXZ';
+        receptionist.root.rotation.set(-Math.PI / 2, -Math.PI / 2, 0);
+        receptionist.root.position.set(-4, 0.14, 2.1);
+      }
+    } else if (receptionistAsleep) {
+      receptionistAsleep = false;
+      receptionist.root.rotation.order = 'XYZ';
+      receptionist.root.rotation.set(0, Math.PI, 0);
+      receptionist.root.position.set(-3, 0, 2.55);
+    }
+    if (!brawling) {
+      const target = lying
+        ? receptionist.root.rotation.y
+        : cur
+          ? Math.atan2(0 - receptionist.root.position.x, -1.5 - receptionist.root.position.z)
+          : Math.PI;
+      const d = Math.atan2(Math.sin(target - receptionist.root.rotation.y), Math.cos(target - receptionist.root.rotation.y));
+      receptionist.root.rotation.y += d * Math.min(1, 5 * dt);
+      if (!lying) receptionist.mixer.update(dt);
+    }
+  }
+  {
+    // Lời thoại nổi: hai người đánh nhau cãi nhau lần lượt; lễ tân nhảy vào thì chửi theo
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    const floats: Array<{ key: string; text: string; x: number; y: number }> = [];
+    for (const l of guests?.fightLines() ?? []) {
+      const p = guests?.headScreen(l.id, camera, w, h);
+      if (p) floats.push({ key: l.id, text: l.text, x: p.x, y: p.y });
+    }
+    if (receptionist && guests?.joinMode === 'fight' && guests.joinArrived) {
+      const v = new Vector3(receptionist.root.position.x, 2.05, receptionist.root.position.z).project(camera);
+      floats.push({ key: 'me', text: 'Chúng m* ch*t cdmm ròi!', x: ((v.x + 1) / 2) * w, y: ((1 - v.y) / 2) * h });
+    }
+    ui.setFloatBubbles(floats);
   }
   const id = ui.bubbleId;
   ui.placeBubble(id && guests ? guests.headScreen(id, camera, canvas.clientWidth, canvas.clientHeight) : null);
@@ -373,4 +608,9 @@ renderer.setAnimationLoop((now) => {
 
 // Cho phép kiểm thử tự động tua nhanh và đọc trạng thái.
 (window as unknown as { __game: () => Game | null }).__game = () => game;
-(window as unknown as { __guests: () => unknown }).__guests = () => ({ pos: guests?.debugPositions() ?? [], obstacles: lobby?.obstacles ?? [], door: lobby?.door, head: (id: string) => guests?.headScreen(id, camera, canvas.clientWidth, canvas.clientHeight) ?? null });
+(window as unknown as { __guests: () => unknown }).__guests = () => ({
+  pos: guests?.debugPositions() ?? [],
+  obstacles: lobby?.obstacles ?? [],
+  door: lobby?.door,
+  head: (id: string) => guests?.headScreen(id, camera, canvas.clientWidth, canvas.clientHeight) ?? null,
+});

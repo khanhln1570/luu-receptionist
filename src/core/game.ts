@@ -1,6 +1,6 @@
 import { computeBill, type Bill } from './billing';
 import { buildCalendar, holdsNight, type CalendarRow } from './calendar';
-import { GameClock } from './clock';
+import { GameClock, formatMinute } from './clock';
 import {
   PATIENCE_FACTOR,
   generateDay,
@@ -14,6 +14,7 @@ import { isPaid, serviceFor, servicePrice, type PaidKind } from './pricing';
 import { REGULAR, type RegularOutcome, type RegularVisit } from './regulars';
 import { checkIn, checkOut, type ExtraCharge, type Reservation } from './reservations';
 import { fail, ok, type Result } from './result';
+import { NIGHT_SHIFT_END, drowsyFor, windowAt, type SleepWindow } from './sleep';
 import { Rng } from './rng';
 import { transition, type Room, type RoomType } from './rooms';
 import { SCORE, clampScore, computeDayResult, meanScore, waitPenalty, type DayResult } from './scoring';
@@ -113,7 +114,8 @@ export class Game {
       roomTypes: [...new Set(config.rooms.map((r) => r.type))],
     };
 
-    this.clock = new GameClock(params.openMinute, params.closeMinute);
+    this.clock = new GameClock(params.openMinute, params.nightShift ? NIGHT_SHIFT_END : params.closeMinute);
+    this.nightShift = !!params.nightShift;
     this.rooms = config.rooms.map((r) => ({ ...r }));
     const rng = new Rng(seed);
     // Chọn tình huống không lặp trong cùng một ngày cho tới khi dùng hết kho của loại đó.
@@ -217,6 +219,23 @@ export class Game {
         scenarioId: extras.ownerVisit.id,
       });
     }
+    if (params.nightShift) {
+      // Ban đêm chỉ có 1–2 khách muộn, gõ cửa lúc lễ tân đang ngủ
+      const nightRng = new Rng((seed ^ 0x2545f491) >>> 0);
+      const count = nightRng.chance(0.65) ? 2 : 1;
+      for (let i = 0; i < count; i++) {
+        const personality = randomPersonality(nightRng);
+        arrivals.push({
+          id: `n${i + 1}`,
+          arrivalMinute: nightRng.int(params.closeMinute + 30, 30 * 60),
+          kind: 'walkin',
+          guestName: randomName(nightRng),
+          personality,
+          patienceMinutes: Math.round(params.patienceMinutes * PATIENCE_FACTOR[personality]),
+          roomType: nightRng.pick(params.roomTypes!.filter((t) => t !== 'vip').length ? params.roomTypes!.filter((t) => t !== 'vip') : [...params.roomTypes!]),
+        });
+      }
+    }
     this.visitors = generateVisitors(new Rng((seed ^ 0x7f4a7c15) >>> 0), params.openMinute, params.closeMinute);
 
     this.futureBookings = this.makeFutureBookings(seed);
@@ -299,11 +318,125 @@ export class Game {
     return this.queue.waiting.length + (this.queue.current ? 1 : 0) + this.queue.pendingCount;
   }
 
+  // ---- Ngủ ----
+
+  private readonly nightShift: boolean;
+  asleep = false;
+  private sleepUntil = 0;
+  private decided = new Set<string>(); // khung giờ ngủ đã chọn "làm tiếp"
+  private knocks: WaitingGuest[] = []; // khách bấm chuông lúc lễ tân đang ngủ
+
+  /** Đang trong giờ ngủ mà vẫn thức: mệt, khách mất kiên nhẫn nhanh hơn. */
+  get tired(): boolean {
+    return this.nightShift && !this.asleep && !!windowAt(this.clock.minute);
+  }
+
+  /** Trạng thái của lễ tân để hiện trên màn hình. */
+  get sleepState(): 'awake' | 'drowsy' | 'tired' | 'asleep' {
+    if (!this.nightShift || this.isOver) return 'awake';
+    if (this.asleep) return 'asleep';
+    if (this.tired) return 'tired';
+    return drowsyFor(this.clock.minute) ? 'drowsy' : 'awake';
+  }
+
+  /** Lúc quầy đang rảnh mà tới giờ buồn ngủ: hỏi người chơi đi ngủ hay làm tiếp. */
+  get sleepPrompt(): SleepWindow | null {
+    if (!this.nightShift || this.asleep || this.isOver || this.queue.current || this.queue.waiting.length > 0 || this.knocks.length > 0) return null;
+    const w = windowAt(this.clock.minute) ?? drowsyFor(this.clock.minute);
+    return w && !this.decided.has(w.id) ? w : null;
+  }
+
+  /** Khách đang bấm chuông chờ lễ tân quyết định có tiếp không. */
+  get knock(): WaitingGuest | null {
+    return this.knocks[0] ?? null;
+  }
+
+  sleepEnd(): number {
+    return this.sleepUntil;
+  }
+
+  /** Đi ngủ bằng nút trong menu, giờ nào cũng được khi quầy rảnh. Trong giờ ngủ thì ngủ tới hết giờ, ngoài giờ ngủ thì chợp mắt một tiếng. */
+  sleepNow(): Result {
+    if (!this.nightShift || this.isOver) return fail('Không ngủ được lúc này');
+    if (this.asleep) return fail('Bạn đang ngủ rồi');
+    if (this.queue.current || this.queue.waiting.length > 0 || this.knocks.length > 0) return fail('Còn khách ở quầy, tiếp xong rồi hãy ngủ');
+    const w = windowAt(this.clock.minute) ?? drowsyFor(this.clock.minute);
+    if (w) this.decided.delete(w.id);
+    return this.beginSleep(w ? w.end : Math.min(this.clock.minute + 60, this.clock.closeMinute), w ? w.label : 'chợp mắt');
+  }
+
+  private beginSleep(until: number, label: string): Result {
+    this.asleep = true;
+    this.sleepUntil = until;
+    this.events.push({ kind: 'good', text: `Bạn đi ${label} lúc ${formatMinute(this.clock.minute)}.` });
+    return ok;
+  }
+
+  sleep(): Result {
+    const w = this.sleepPrompt;
+    if (!w) return fail('Chưa tới giờ ngủ');
+    return this.beginSleep(w.end, w.label);
+  }
+
+  /** Cố thức làm tiếp trong khung giờ này (sẽ mệt, khách mất kiên nhẫn nhanh hơn). */
+  stayAwake(): Result {
+    const w = this.sleepPrompt;
+    if (!w) return fail('Chưa tới giờ ngủ');
+    this.decided.add(w.id);
+    return ok;
+  }
+
+  /** Dậy sớm, không ngủ tiếp trong khung giờ này. */
+  wake(): void {
+    if (!this.asleep) return;
+    this.asleep = false;
+    const w = windowAt(this.clock.minute);
+    if (w) this.decided.add(w.id);
+  }
+
+  /** Trả lời khách đang bấm chuông: dậy tiếp thì khách xin lỗi và kiên nhẫn hơn; không tiếp thì khách bực bỏ đi. */
+  answerKnock(accept: boolean): Result {
+    const g = this.knocks.shift();
+    if (!g) return fail('Không có ai gõ cửa');
+    const name = g.arrival.guestName;
+    if (accept) {
+      this.asleep = false;
+      g.patienceLeft = Math.round(g.arrival.patienceMinutes * 1.5);
+      this.queue.waiting.push(g);
+      this.events.push({ kind: 'good', text: `Bạn dậy tiếp ${name} lúc ${formatMinute(this.clock.minute)}.` });
+      return ok;
+    }
+    this.stats.turnedAway += 1;
+    this.scores.push(SCORE.turnedAway);
+    if (g.arrival.regularId) this.recordRegular(g.arrival, -8);
+    this.events.push({ kind: 'bad', text: `${name} bấm chuông lúc ${formatMinute(this.clock.minute)} không ai tiếp, bực bội bỏ đi.` });
+    return ok;
+  }
+
   tick(deltaMinutes: number): TickResult {
-    if (this.isOver) return { arrived: [], left: [], finished: [] };
+    if (this.isOver || this.sleepPrompt) return { arrived: [], left: [], finished: [] };
     this.clock.advance(deltaMinutes);
-    const left = this.queue.tick(deltaMinutes);
+    if (this.asleep && this.clock.minute >= this.sleepUntil) {
+      this.asleep = false;
+      this.events.push({ kind: 'good', text: `Bạn thức dậy lúc ${formatMinute(this.clock.minute)}.` });
+    }
+    const left = this.queue.tick(this.tired ? deltaMinutes * 1.5 : deltaMinutes);
+    // Khách bấm chuông mà không ai dậy tiếp thì chờ tới hết kiên nhẫn rồi bỏ đi, bị trừ hài lòng
+    for (const k of [...this.knocks]) {
+      k.patienceLeft -= deltaMinutes;
+      if (k.patienceLeft > 0) continue;
+      this.knocks.splice(this.knocks.indexOf(k), 1);
+      this.stats.left += 1;
+      this.scores.push(SCORE.left);
+      this.events.push({ kind: 'bad', text: `${k.arrival.guestName} bấm chuông mãi không ai tiếp nên bỏ đi.` });
+    }
     const arrived = this.queue.admit(this.clock.minute);
+    if (this.asleep) {
+      for (const g of arrived.splice(0)) {
+        this.queue.take(g);
+        this.knocks.push(g);
+      }
+    }
     const finished = this.tasks.tick(deltaMinutes);
     this.stats.left += left.length;
     for (const g of left) {
@@ -563,7 +696,25 @@ export class Game {
     }
     if (e.task && res?.roomId) this.tasks.assign(res.roomId, e.task);
     if (e.money) this.stats.revenue += e.money;
+    if (e.police) this.policeCalls += 1;
+    if (e.join) this.joinedFights += 1;
+    if (e.intervene) this.intervened += 1;
+    if (e.arrest) this.arrests += 1;
+    if (e.walkOut) {
+      // Bỏ chạy giữa ca: ca kết thúc ngay, khách còn lại coi như bị bỏ rơi
+      this.events.push({ kind: 'bad', text: 'Bạn bỏ chạy nghỉ việc giữa ca.' });
+      this.clock.minute = this.clock.closeMinute;
+    }
   }
+
+  /** Số lần gọi cảnh sát trong ngày; cảnh 3D dùng để biết khi nào cho cảnh sát vào sảnh. */
+  policeCalls = 0;
+  /** Số lần lễ tân nhảy vào đánh chung trong ngày. */
+  joinedFights = 0;
+  /** Số lần lễ tân lao vào can ngăn trong ngày. */
+  intervened = 0;
+  /** Số lần lễ tân bị cảnh sát bắt (cảnh 3D đưa ra phố rồi cho nghỉ việc). */
+  arrests = 0;
 
   // ---- Thử tình huống ----
 
@@ -638,7 +789,7 @@ export class Game {
   /** Người lạ đang có mặt ở sảnh: đã tới giờ, chưa hết giờ ở và chưa bị xử lý. */
   activeVisitors(): Visitor[] {
     const now = this.clock.minute;
-    return this.visitors.filter((v) => !this.visitorFate.has(v.id) && now >= v.arrivalMinute && now < v.arrivalMinute + v.stayMinutes && !this.isOver);
+    return this.visitors.filter((v) => !this.visitorFate.has(v.id) && now >= v.arrivalMinute && now < v.arrivalMinute + v.stayMinutes && !this.isOver && !this.asleep);
   }
 
   /** Hỏi thăm một người lạ: thường là manh mối về vai của họ. null nếu người đó không còn ở sảnh. */

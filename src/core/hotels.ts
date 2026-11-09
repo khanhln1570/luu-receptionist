@@ -115,6 +115,7 @@ export function parseHotels(data: unknown): HotelDef[] {
           walkInRate: d.walkInRate ?? 0,
           openMinute: 8 * 60,
           closeMinute: 22 * 60,
+          nightShift: true,
           incidentRate: d.incidentRate ?? 0,
           overbookingRate: d.overbookingRate ?? 0,
           specialRate: d.specialRate ?? 0,

@@ -47,6 +47,12 @@ export class GuestQueue {
     return g;
   }
 
+  /** Lấy một khách ra khỏi hàng chờ (dùng khi khách bấm chuông lúc lễ tân đang ngủ). */
+  take(g: WaitingGuest): void {
+    const i = this.waiting.indexOf(g);
+    if (i >= 0) this.waiting.splice(i, 1);
+  }
+
   /** Gọi khách đầu hàng vào phục vụ. Trả null nếu đang bận hoặc hàng trống. */
   callNext(): WaitingGuest | null {
     if (this.current || this.waiting.length === 0) return null;

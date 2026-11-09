@@ -445,3 +445,225 @@ describe('phí dịch vụ dọn phòng và sửa chữa', () => {
     expect(g.stats.serviceCost).toBe(0);
   });
 });
+
+describe('lễ tân đi ngủ', () => {
+  const NIGHT = { ...SAMPLE_HOTEL, params: { ...SAMPLE_HOTEL.params, nightShift: true } };
+  const goTo = (g: Game, minute: number) => {
+    // chạy tới mốc cần tới, dừng sớm nếu gặp câu hỏi đi ngủ
+    for (let i = 0; i < 4000 && g.clock.minute < minute && !g.sleepPrompt; i++) {
+      if (g.knock) g.answerKnock(true);
+      if (g.queue.current) g.queue.finishCurrent();
+      g.queue.waiting.length = 0;
+      g.tick(1);
+    }
+  };
+
+  it('ca thường (không ca đêm) không có chuyện ngủ', () => {
+    const g = new Game(SAMPLE_HOTEL, 3);
+    goTo(g, 12 * 60 + 10);
+    expect(g.sleepPrompt).toBeNull();
+    expect(g.sleepState).toBe('awake');
+  });
+
+  it('ca đêm kéo tới 07:00 và chỉ có 1–2 khách muộn', () => {
+    const g = new Game(NIGHT, 5);
+    expect(g.clock.closeMinute).toBe(31 * 60);
+    const late = [...g.queue.waiting, ...(g.queue as unknown as { pending: { id: string }[] }).pending].filter((a) => ('arrival' in a ? a.arrival.id : a.id).startsWith('n'));
+    expect(late.length).toBeGreaterThanOrEqual(1);
+    expect(late.length).toBeLessThanOrEqual(2);
+  });
+
+  it('gần giờ ngủ thì buồn ngủ, tới giờ khi rảnh thì hỏi; thời gian dừng cho tới khi trả lời', () => {
+    const g = new Game(NIGHT, 5);
+    goTo(g, 11 * 60 + 40);
+    expect(g.sleepState).toBe('drowsy');
+    expect(g.sleepPrompt?.id).toBe('nap');
+    const m = g.clock.minute;
+    g.tick(5);
+    expect(g.clock.minute).toBe(m);
+  });
+
+  it('ngủ trưa tới 13:00 rồi tự dậy', () => {
+    const g = new Game(NIGHT, 5);
+    goTo(g, 12 * 60);
+    expect(g.sleep().ok).toBe(true);
+    expect(g.asleep).toBe(true);
+    for (let i = 0; i < 100 && g.asleep && !g.knock; i++) g.tick(1);
+    if (!g.knock) {
+      expect(g.asleep).toBe(false);
+      expect(g.clock.minute).toBeGreaterThanOrEqual(13 * 60);
+    }
+  });
+
+  it('khách bấm chuông lúc ngủ: tiếp thì dậy và khách kiên nhẫn hơn, không tiếp thì khách bỏ đi và bị trừ', () => {
+    for (const accept of [true, false]) {
+      let g = new Game(NIGHT, 5);
+      // chọn ván có khách muộn tới đúng lúc đang ngủ
+      for (let seed = 1; seed < 60; seed++) {
+        g = new Game(NIGHT, seed);
+        goTo(g, 22 * 60 + 50);
+        g.sleep();
+        for (let i = 0; i < 900 && !g.knock && !g.isOver; i++) g.tick(1);
+        if (g.knock) break;
+      }
+      expect(g.knock).not.toBeNull();
+      const base = g.knock!.arrival.patienceMinutes;
+      const before = { away: g.stats.turnedAway, sat: g.satisfaction };
+      g.answerKnock(accept);
+      if (accept) {
+        expect(g.asleep).toBe(false);
+        expect(g.queue.waiting[0]!.patienceLeft).toBeGreaterThan(base);
+      } else {
+        expect(g.stats.turnedAway).toBe(before.away + 1);
+        expect(g.satisfaction).toBeLessThan(before.sat + 0.0001);
+        expect(g.queue.waiting.length).toBe(0);
+      }
+    }
+  });
+
+  it('thức trong giờ ngủ thì mệt: khách mất kiên nhẫn nhanh hơn', () => {
+    const g = new Game(NIGHT, 5);
+    goTo(g, 12 * 60);
+    g.stayAwake();
+    for (let i = 0; i < 40; i++) g.tick(1);
+    expect(g.tired).toBe(true);
+    expect(g.sleepState).toBe('tired');
+  });
+
+  it('tự động làm việc tự trả lời câu hỏi ngủ và chuông', async () => {
+    const { autoStep } = await import('../src/core/autopilot');
+    const g = new Game(NIGHT, 5);
+    for (let i = 0; i < 6000 && !g.isOver; i++) {
+      g.tick(1);
+      autoStep(g);
+    }
+    expect(g.isOver).toBe(true);
+  });
+});
+
+describe('nút đi ngủ trong menu', () => {
+  const NIGHT = { ...SAMPLE_HOTEL, params: { ...SAMPLE_HOTEL.params, nightShift: true } };
+  it('ngủ được bất kỳ lúc nào, kể cả sau khi đã chọn cố thức', () => {
+    const g = new Game(NIGHT, 5);
+    expect(g.sleepNow().ok).toBe(true); // giờ nào cũng ngủ được
+    expect(g.asleep).toBe(true);
+    g.wake();
+    for (let i = 0; i < 4000 && !g.sleepPrompt; i++) {
+      if (g.queue.current) g.queue.finishCurrent();
+      g.queue.waiting.length = 0;
+      g.tick(1);
+    }
+    g.stayAwake();
+    expect(g.sleepNow().ok).toBe(true);
+    expect(g.asleep).toBe(true);
+    expect(g.sleepNow().ok).toBe(false);
+  });
+});
+
+describe('ngủ lâu bỏ khách', () => {
+  it('khách bấm chuông không ai tiếp thì chờ hết kiên nhẫn rồi bỏ đi, trừ hài lòng; thời gian vẫn trôi', () => {
+    const NIGHT = { ...SAMPLE_HOTEL, params: { ...SAMPLE_HOTEL.params, nightShift: true } };
+    for (let seed = 1; seed < 60; seed++) {
+      const g = new Game(NIGHT, seed);
+      for (let i = 0; i < 4000 && !g.sleepPrompt; i++) {
+        if (g.queue.current) g.queue.finishCurrent();
+        g.queue.waiting.length = 0;
+        g.tick(1);
+      }
+      g.sleep();
+      for (let i = 0; i < 900 && !g.knock && !g.isOver; i++) g.tick(1);
+      if (!g.knock) continue;
+      const m = g.clock.minute;
+      const left = g.stats.left;
+      g.tick(1);
+      expect(g.clock.minute).toBeGreaterThan(m); // không dừng chờ
+      for (let i = 0; i < 200 && g.stats.left === left; i++) g.tick(1);
+      expect(g.stats.left).toBe(left + 1);
+      return;
+    }
+    throw new Error('không có ván nào có khách muộn lúc đang ngủ');
+  });
+});
+
+describe('khách đánh nhau trong sảnh', () => {
+  const scenarios = validateScenarios(JSON.parse(readFileSync('src/data/scenarios.json', 'utf-8')));
+  const start = () => {
+    const g = new Game(SAMPLE_HOTEL, 9, scenarios);
+    expect(g.triggerScenario('danh-nhau-sanh').ok).toBe(true);
+    g.callNext();
+    return g;
+  };
+  const idx = (g: Game, text: string) => g.currentScenario()!.options.findIndex((o) => o.text.includes(text));
+
+  it('có 4 lựa chọn, gọi cảnh sát thì cảnh sát tới và khách hài lòng', () => {
+    const g = start();
+    expect(g.currentScenario()!.options).toHaveLength(4);
+    const r = g.chooseOption(idx(g, 'Gọi cảnh sát'));
+    expect(r.ok && r.satisfaction).toBeGreaterThan(0);
+    expect(g.policeCalls).toBe(1);
+  });
+
+  it('đánh chung vẫn bị cảnh sát tới còng và mất tiền, can ngăn thì không có cảnh sát', () => {
+    const a = start();
+    const before = a.stats.revenue;
+    a.chooseOption(idx(a, 'đánh chung'));
+    expect(a.policeCalls).toBe(1);
+    expect(a.stats.revenue).toBeLessThan(before);
+    const b = start();
+    b.chooseOption(idx(b, 'can ngăn'));
+    expect(b.policeCalls).toBe(0);
+  });
+
+  it('chạy nghỉ việc thì ca kết thúc ngay', () => {
+    const g = start();
+    g.chooseOption(idx(g, 'nghỉ việc'));
+    expect(g.isOver).toBe(true);
+  });
+});
+
+describe('đánh chung', () => {
+  it('nhảy vào đánh chung được ghi nhận để cảnh 3D cho lễ tân chạy vào', () => {
+    const scenarios = validateScenarios(JSON.parse(readFileSync('src/data/scenarios.json', 'utf-8')));
+    const g = new Game(SAMPLE_HOTEL, 9, scenarios);
+    g.triggerScenario('danh-nhau-sanh');
+    g.callNext();
+    g.chooseOption(g.currentScenario()!.options.findIndex((o) => o.text.includes('đánh chung')));
+    expect(g.joinedFights).toBe(1);
+    expect(g.policeCalls).toBe(1);
+    expect(g.arrests).toBe(1); // bị cảnh sát bắt, cảnh 3D đưa ra phố
+  });
+});
+
+describe('can ngăn đánh nhau', () => {
+  it('lao vào can ngăn: lễ tân bị đánh gục (ghi nhận), mất tiền, không có cảnh sát', () => {
+    const scenarios = validateScenarios(JSON.parse(readFileSync('src/data/scenarios.json', 'utf-8')));
+    const g = new Game(SAMPLE_HOTEL, 9, scenarios);
+    g.triggerScenario('danh-nhau-sanh');
+    g.callNext();
+    const before = g.stats.revenue;
+    g.chooseOption(g.currentScenario()!.options.findIndex((o) => o.text.includes('can ngăn')));
+    expect(g.intervened).toBe(1);
+    expect(g.policeCalls).toBe(0);
+    expect(g.stats.revenue).toBe(before - 150_000);
+  });
+});
+
+describe('cướp xông vào', () => {
+  const scenarios = validateScenarios(JSON.parse(readFileSync('src/data/scenarios.json', 'utf-8')));
+  const run = (text: string) => {
+    const g = new Game(SAMPLE_HOTEL, 9, scenarios);
+    expect(g.triggerScenario('co-cuop').ok).toBe(true);
+    g.callNext();
+    expect(g.currentScenario()!.options).toHaveLength(2);
+    const before = g.stats.revenue;
+    g.chooseOption(g.currentScenario()!.options.findIndex((o) => o.text.includes(text)));
+    return { g, lost: before - g.stats.revenue };
+  };
+  it('chỉ có hai lựa chọn: nằm im giả ngủ (mất tiền, trừ điểm) hoặc báo cảnh sát', () => {
+    const lie = run('Nằm im');
+    expect(lie.lost).toBe(300_000);
+    const cops = run('báo cảnh sát');
+    expect(cops.g.policeCalls).toBe(1);
+    expect(cops.g.satisfaction).toBeGreaterThan(lie.g.satisfaction);
+  });
+});

@@ -59,7 +59,7 @@
     "patienceMinutes": 25,
     "walkInRate": 0.3,
     "incidentRate": 0.7,
-    "overbookingRate": 0.1,
-    "specialRate": 0.12
+    "overbookingRate": 0.25,
+    "specialRate": 0.5
   }
 }

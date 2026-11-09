@@ -246,3 +246,12 @@ button.collapse { padding: 0 8px; line-height: 18px; font-size: 16px; border-rad
 .quote .q-price { font-size: 30px; font-weight: 700; color: var(--accent); margin: 6px 0; }
 .quote .actions { display: flex; gap: 8px; justify-content: center; margin-top: 10px; }
 
+
+.sleepy { color: #9db8ff; font-weight: 600; }
+.sleepy:empty { display: none; }
+
+
+.floats { position: absolute; inset: 0; pointer-events: none; z-index: 6; }
+.fb { position: absolute; transform: translate(-50%, -100%); background: #fff; color: #1d1d24; padding: 5px 12px; border-radius: 14px; font-weight: 700; font-size: 14px; white-space: normal; width: max-content; max-width: 340px; text-align: center; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.4); }
+.fb::after { content: ''; position: absolute; left: 50%; bottom: -6px; transform: translateX(-50%); border: 6px solid transparent; border-bottom: 0; border-top-color: #fff; }
+#ui.in-menu .floats { display: none; }

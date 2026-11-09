@@ -766,5 +766,76 @@
         }
       }
     ]
+  },
+  {
+    "id": "danh-nhau-sanh",
+    "type": "special",
+    "lines": [
+      "Có hai người đang đánh nhau giữa sảnh! Ghế bay tứ tung, khách ngồi chờ hét ầm lên. Anh/chị làm gì đi chứ?!"
+    ],
+    "options": [
+      {
+        "text": "Gọi cảnh sát",
+        "result": "Cảnh sát tới trong vài phút, còng hai người đưa đi. Sảnh yên lại, khách vỗ tay.",
+        "effects": {
+          "satisfaction": 8,
+          "police": true
+        }
+      },
+      {
+        "text": "Lao vào can ngăn",
+        "result": "Bạn lao vào giữa, ăn một cú đấm trời giáng rồi ngã lăn ra. Hai người giật mình dừng tay, bàn ghế vỡ mất mấy cái.",
+        "effects": {
+          "satisfaction": -4,
+          "money": -150000,
+          "intervene": true
+        }
+      },
+      {
+        "text": "Nhảy vào đánh chung",
+        "result": "Bạn đánh hăng quá. Cảnh sát ập vào còng cả ba người, áp giải bạn ra ngoài. Bạn mất việc.",
+        "effects": {
+          "satisfaction": -18,
+          "money": -300000,
+          "police": true,
+          "join": true,
+          "arrest": true
+        }
+      },
+      {
+        "text": "Chạy nghỉ việc",
+        "result": "Bạn lủi ra cửa sau và biến mất, để lại cả sảnh hỗn loạn.",
+        "effects": {
+          "satisfaction": -30,
+          "walkOut": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "co-cuop",
+    "type": "special",
+    "lines": [
+      "Cướp xông vào! Cả sảnh quỳ rạp xuống, còn bạn đang nằm im dưới bàn."
+    ],
+    "options": [
+      {
+        "text": "Nằm im giả vờ ngủ",
+        "result": "Cướp tự tay vét két rồi đi. Khách thấy lễ tân nằm ngủ giữa lúc nguy hiểm thì rất bất mãn.",
+        "effects": {
+          "satisfaction": -10,
+          "money": -300000
+        }
+      },
+      {
+        "text": "Lén ấn chuông báo cảnh sát",
+        "result": "Cảnh sát ập tới đúng lúc, còng gọn cả bọn. Khách vỗ tay rần rần.",
+        "effects": {
+          "satisfaction": 10,
+          "money": -100000,
+          "police": true
+        }
+      }
+    ]
   }
 ]

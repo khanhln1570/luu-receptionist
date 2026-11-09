@@ -115,6 +115,7 @@ export class UI {
       <div class="hud"><div class="panel">
         ${clockHtml()}</span>
         <span class="name"><span data-k="hotel"></span> · <span data-k="day"></span></span>
+        <span class="sleepy" data-k="sleepy"></span>
         <span class="stat">Hàng chờ: <b data-k="waiting"></b></span>
         <span class="stat">Đã nhận phòng: <b data-k="checked"></b></span>
         <span class="stat">Đã trả phòng: <b data-k="out"></b></span>
@@ -132,7 +133,7 @@ export class UI {
           <button data-act="skip" title="Tua nhanh tới khi có khách kế tiếp hoặc hết ngày">Tua nhanh tới khách kế »</button>
           <button data-act="pick-open" title="Chọn một tình huống để nó xảy ra ngay">Chọn tình huống…</button>
           <button data-act="calendar" title="Lịch đặt phòng 7 ngày tới">Lịch đặt phòng</button>
-          <button data-act="auto" title="Lễ tân tự nhận phòng, trả phòng, xử lý khách và giao việc dọn phòng">Tự động làm việc: Tắt</button>
+          <button data-act="sleep-menu">Đi ngủ</button><button data-act="auto" title="Lễ tân tự nhận phòng, trả phòng, xử lý khách và giao việc dọn phòng">Tự động làm việc: Tắt</button>
           <button data-act="street" title="Ra phố nhưng giữ nguyên ca đang làm; vào lại cùng khách sạn để làm tiếp">Ra phố (giữ ca)</button>
           <button class="quit" data-act="quit" title="Bỏ ca đang làm, không tính kết quả">Nghỉ việc</button>
         </div>
@@ -150,6 +151,7 @@ export class UI {
       <button class="dock dock-left" data-act="toggle-left" title="Mở sổ đặt phòng" aria-label="Mở sổ đặt phòng"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M5 4h10a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M8 8h7M8 12h7M8 16h4"/></svg></button>
       <button class="dock dock-right" data-act="toggle-right" title="Mở bảng phòng" aria-label="Mở bảng phòng"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/></svg></button>
       <div class="bubble" data-k="bubble"></div>
+      <div class="floats" data-k="floats"></div>
       <div class="dialog panel" data-k="dialog"></div>
       <div class="toast" data-k="toast"></div>
       <div data-k="cal"></div>
@@ -294,7 +296,7 @@ export class UI {
         <div class="street-tools"><span class="panel street-clock${this.warp ? ' warping' : ''}">${clockHtml()}${this.warp ? '<span class="warp-tag">»» Đang tua</span>' : ''}</span>${this.tutorial ? '' : '<button data-act="tut-open" title="Nghe Lưu hướng dẫn lại">? Hướng dẫn</button>'}
           <div class="street-menu"><button class="hamburger" data-act="street-menu" aria-label="Menu" aria-expanded="${this.streetMenu}">☰</button>${
             this.streetMenu
-              ? `<div class="street-pop panel"><button data-act="warp">${this.warp ? '■ Dừng tua (về giờ thật)' : '»» Tua ngày đêm'}</button><button class="danger" data-act="reset">Xóa tiến trình</button></div>`
+              ? `<div class="street-pop panel"><button data-act="warp">${this.warp ? '■ Dừng tua (về giờ khách sạn)' : '»» Tua ngày đêm'}</button><button class="danger" data-act="reset">Xóa tiến trình</button></div>`
               : ''
           }</div></div></div>
       ${tut}<div class="street-labels">${labels}</div>${card}</div>`;
@@ -352,6 +354,11 @@ export class UI {
   }
 
   /** Đặt bong bóng lên đầu nhân vật mỗi khung hình; pos null (người đã đi khỏi) thì đóng. */
+  /** Bong bóng thoại nổi trên đầu nhân vật (cảnh đánh nhau...), vị trí theo pixel. */
+  setFloatBubbles(items: Array<{ key: string; text: string; x: number; y: number }>): void {
+    this.set('floats', items.map((b) => `<div class="fb" style="left:${Math.round(b.x)}px;top:${Math.round(b.y)}px">${esc(b.text)}</div>`).join(''));
+  }
+
   placeBubble(pos: { x: number; y: number } | null): void {
     const el = this.el.bubble!;
     if (this.bubble && (!pos || performance.now() > this.bubble.until)) this.bubble = null;
@@ -520,6 +527,16 @@ export class UI {
       this.speed = Number(btn.dataset.speed);
       this.skipping = false;
     }
+    else if (btn.dataset.act === 'knock-yes') g.answerKnock(true);
+    else if (btn.dataset.act === 'knock-no') g.answerKnock(false);
+    else if (btn.dataset.act === 'sleep-yes') g.sleep();
+    else if (btn.dataset.act === 'sleep-menu') {
+      const r = g.sleepNow();
+      this.menuOpen = false;
+      this.toast(r.ok ? 'Bạn đi ngủ…' : r.error, r.ok ? 'ok' : 'bad');
+    }
+    else if (btn.dataset.act === 'sleep-no') g.stayAwake();
+    else if (btn.dataset.act === 'wake') g.wake();
     else if (btn.dataset.act === 'ask') this.talk = { id: g.queue.current?.arrival.id ?? '', step: this.talkStep() + 1 };
     else if (btn.dataset.res) this.selectedRes = btn.dataset.res === this.selectedRes ? null : btn.dataset.res;
     else if (btn.dataset.room) this.onRoomClick(btn.dataset.room);
@@ -683,9 +700,9 @@ export class UI {
   render(): void {
     const g = this.game;
     if (!g) return;
-    // Đồng hồ hiện giờ local của máy cho khớp với trời ngoài phố; ca làm vẫn chạy theo g.clock
-    const now = new Date();
-    setClock(this.root.querySelector('.hud')!, now.getHours() * 60 + now.getMinutes());
+    // Đồng hồ trong sảnh là giờ của ca làm (có giờ ngủ trưa, ngủ đêm); ngoài phố mới theo giờ máy
+    setClock(this.root.querySelector('.hud')!, g.clock.minute);
+    this.setText('sleepy', { awake: '', drowsy: 'Buồn ngủ…', tired: 'Mệt, cố thức', asleep: 'Đang ngủ Zzz' }[g.sleepState]);
     this.setText('hotel', g.config.name);
     this.setText('day', `Ngày ${this.day} · ${dateOf(this.day).weekday} ${dateOf(this.day).text}`);
     this.setText('target', vnd(g.revenueTarget));
@@ -735,6 +752,20 @@ export class UI {
     const bill = g.billing;
     if (g.isOver && this.summaryHidden) {
       this.set('dialog', `<div><div class="who">Hết ngày</div><div class="actions"><button class="primary" data-act="summary-open">Xem tổng kết</button><button data-act="restart">Chơi ngày tiếp theo</button></div></div>`);
+    } else if (g.knock) {
+      const k = g.knock.arrival;
+      this.set(
+        'dialog',
+        `${this.portrait(k.guestName, 'binh-thuong')}<div><div class="who">${esc(k.guestName)} bấm chuông</div><div class="line">Bạn đang ngủ. Ngoài cửa có khách tới lúc ${formatMinute(g.clock.minute)}. Dậy tiếp thì khách xin lỗi vì làm phiền. Không tiếp (hoặc để khách chờ lâu) thì khách bỏ đi và bị trừ điểm hài lòng.</div><div class="actions"><button class="primary" data-act="knock-yes">Dậy tiếp khách</button><button data-act="knock-no">Không tiếp</button></div></div>`,
+      );
+    } else if (g.sleepPrompt) {
+      const w = g.sleepPrompt;
+      this.set(
+        'dialog',
+        `<div><div class="who">Buồn ngủ quá…</div><div class="line">Mắt díp lại rồi, đã tới giờ ${w.label} (${formatMinute(w.start)}–${formatMinute(w.end)}). Ngủ thì khách tới giữa chừng sẽ bấm chuông để bạn quyết định có tiếp không. Cố thức thì làm việc được nhưng mệt, khách mất kiên nhẫn nhanh hơn.</div><div class="actions"><button class="primary" data-act="sleep-yes">Đi ngủ</button><button data-act="sleep-no">Cố thức làm tiếp</button></div></div>`,
+      );
+    } else if (g.asleep) {
+      this.set('dialog', `<div><div class="who">Zzz…</div><div class="line">Bạn đang ngủ, tới ${formatMinute(g.sleepEnd())} sẽ dậy.</div><div class="actions"><button data-act="wake">Dậy sớm</button></div></div>`);
     } else if (cur && bill) {
       const lines = [`${bill.nights} đêm × ${vnd(bill.nightlyRate)} = ${vnd(bill.base)}`, ...bill.charges.map((c) => `${c.label}: ${vnd(c.amount)}`)];
       this.set(
@@ -851,13 +882,14 @@ export class UI {
 /** Đồng hồ kim + nhãn buổi/giờ, dùng chung cho thanh trạng thái trong sảnh và ngoài phố. */
 function clockHtml(): string {
   const ticks = Array.from({ length: 12 }, (_, i) => `<line x1="20" y1="3.5" x2="20" y2="${i % 3 === 0 ? 7 : 5.5}" transform="rotate(${i * 30} 20 20)"/>`).join('');
-  return `<span class="clock" title="Giờ trên máy"><svg viewBox="0 0 40 40" width="34" height="34"><circle cx="20" cy="20" r="18.5" class="face"/><g class="ticks">${ticks}</g><line data-k="hh" class="hand hh" x1="20" y1="20" x2="20" y2="10.5"/><line data-k="mh" class="hand mh" x1="20" y1="20" x2="20" y2="6"/><circle cx="20" cy="20" r="1.6" class="pin"/></svg><span class="cl-text"><b data-k="part"></b><span data-k="time"></span></span></span>`;
+  return `<span class="clock" title="Đồng hồ"><svg viewBox="0 0 40 40" width="34" height="34"><circle cx="20" cy="20" r="18.5" class="face"/><g class="ticks">${ticks}</g><line data-k="hh" class="hand hh" x1="20" y1="20" x2="20" y2="10.5"/><line data-k="mh" class="hand mh" x1="20" y1="20" x2="20" y2="6"/><circle cx="20" cy="20" r="1.6" class="pin"/></svg><span class="cl-text"><b data-k="part"></b><span data-k="time"></span></span></span>`;
 }
 
 /** Đặt kim, nhãn buổi và giờ cho một đồng hồ dựng bằng clockHtml(). */
 function setClock(root: ParentNode, minute: number): void {
   const q = (k: string) => root.querySelector<SVGElement | HTMLElement>(`[data-k="${k}"]`);
-  const part = minute < 12 * 60 ? 'Sáng' : minute < 18 * 60 ? 'Chiều' : 'Tối';
+  const m = minute % (24 * 60);
+  const part = m >= 22 * 60 || m < 5 * 60 ? 'Đêm' : m < 12 * 60 ? 'Sáng' : m < 18 * 60 ? 'Chiều' : 'Tối';
   const time = formatMinute(minute);
   const p = q('part');
   const t = q('time');

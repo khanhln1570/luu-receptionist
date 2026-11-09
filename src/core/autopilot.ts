@@ -9,6 +9,14 @@ const optionValue = (e: { satisfaction?: number; money?: number }): number => (e
  */
 export function autoStep(g: Game): void {
   if (g.isOver) return;
+  if (g.knock) {
+    g.answerKnock(true);
+    return;
+  }
+  if (g.sleepPrompt) {
+    g.sleep();
+    return;
+  }
   for (const r of g.rooms) {
     if (r.status === 'dirty') g.assignTask(r.id, 'cleaning');
     else if (r.status === 'broken') g.assignTask(r.id, 'repair');

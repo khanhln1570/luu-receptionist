@@ -2,14 +2,12 @@ import {
   AnimationMixer,
   BufferAttribute,
   BufferGeometry,
-  CatmullRomCurve3,
   AdditiveBlending,
   Box3,
   CanvasTexture,
   Color,
   ConeGeometry,
   CylinderGeometry,
-  DoubleSide,
   DirectionalLight,
   Group,
   HemisphereLight,
@@ -26,7 +24,6 @@ import {
   SRGBColorSpace,
   SphereGeometry,
   TorusGeometry,
-  TubeGeometry,
   Vector2,
   Vector3,
   type Object3D,
@@ -56,12 +53,6 @@ export interface StreetHotel {
   theme: LobbyTheme;
 }
 
-interface Flag {
-  geo: PlaneGeometry;
-  base: Float32Array; // toạ độ gốc của các đỉnh, để tính sóng
-  phase: number;
-}
-
 /** Mốc màu trời / ánh sáng theo giờ trong ngày (giờ thập phân, 0–24). night: 0 = ban ngày, 1 = ban đêm. */
 interface DayKey {
   h: number;
@@ -80,12 +71,6 @@ const DAY_KEYS: DayKey[] = [
   { h: 19.5, sky: 0x1c2050, amb: 0.5, ambCol: 0x8090d0, night: 1 },
   { h: 24, sky: 0x0b1030, amb: 0.4, ambCol: 0x7080c0, night: 1 },
 ];
-
-/** Giờ hiện tại của máy (thập phân). */
-function clockHour(): number {
-  const d = new Date();
-  return d.getHours() + d.getMinutes() / 60 + d.getSeconds() / 3600;
-}
 
 interface Walker {
   obj: Object3D;
@@ -109,14 +94,12 @@ export class Street {
   private anchors = new Map<string, Vector3>(); // điểm đặt nhãn trên nóc
   private cars: Car[] = [];
   private walkers: Walker[] = [];
-  private flags: Flag[] = [];
   private hemi = new HemisphereLight(0xffffff, 0x7f9a6a, 1.2);
   private sun = new DirectionalLight(0xfff1dc, 1.7);
   private bulbs: MeshStandardMaterial[] = []; // bóng đèn đường, sáng về đêm
   private lampLights: PointLight[] = [];
-  private warp = false;
   /** Giờ của trời ngoài phố (thập phân 0–24): giờ máy, hoặc giờ đang tua. */
-  hour = clockHour();
+  hour = 8; // giờ trong ngày (thập phân), do main.ts đặt theo đồng hồ khách sạn
   private glows: Array<{ m: MeshBasicMaterial; max: number }> = []; // cửa sổ, đèn xe: độ sáng = night × max
   private stars!: Points;
   private moon!: Group;
@@ -296,27 +279,6 @@ export class Street {
     this.glows.push({ m: beamMat, max: 0.55 });
   }
 
-  /** Dây cờ vắt ngang giữa hai tòa liền kề: dây võng nhẹ, cờ đỏ sao vàng rủ xuống đều đặn. */
-  private hangBunting(xa: number, ya: number, xb: number, yb: number, z: number, seed: number): void {
-    const sag = 0.32;
-    const at = (t: number) => new Vector3(xa + (xb - xa) * t, ya + (yb - ya) * t - sag * 4 * t * (1 - t), z);
-    const rope = new Mesh(new TubeGeometry(new CatmullRomCurve3(Array.from({ length: 17 }, (_, i) => at(i / 16))), 32, 0.012, 5), new MeshStandardMaterial({ color: 0x3b2a20, roughness: 0.9 }));
-    rope.castShadow = true;
-    this.scene.add(rope);
-    const n = Math.max(2, Math.round(Math.abs(xb - xa) / 0.34));
-    for (let i = 0; i < n; i++) {
-      const p = at((i + 0.5) / n);
-      const geo = new PlaneGeometry(FLAG_W, FLAG_H, 8, 1);
-      geo.translate(0, -FLAG_H / 2, 0); // mép trên nằm trên dây
-      const base = Float32Array.from(geo.attributes.position!.array);
-      const flag = new Mesh(geo, new MeshStandardMaterial({ map: flagTex(), roughness: 0.8, side: DoubleSide }));
-      flag.position.set(p.x, p.y, z + 0.01);
-      flag.castShadow = true;
-      this.scene.add(flag);
-      this.flags.push({ geo, base, phase: seed + i * 1.3 });
-    }
-  }
-
   setAspect(aspect: number): void {
     this.camera.aspect = aspect;
     // Màn hẹp thì lùi camera để vẫn thấy đủ ba tòa
@@ -371,14 +333,6 @@ export class Street {
         }),
       );
     });
-
-    // Dây cờ vắt qua từng khoảng hở giữa các tòa khách sạn (neo ở mép tường, dưới nóc 0.15)
-    const edge = (i: number) => ({ x: SLOTS_X[i]!, y: ROOF[BUILDING[hotels[i]!.theme]]! * BUILDING_SCALE - 0.15 });
-    for (let i = 0; i + 1 < Math.min(hotels.length, SLOTS_X.length); i++) {
-      const l = edge(i);
-      const r = edge(i + 1);
-      this.hangBunting(l.x + WALL_HALF, l.y, r.x - WALL_HALF, r.y, ROW_Z + FACADE_Z * BUILDING_SCALE, i * 2.1);
-    }
 
     // Nhà hàng xóm hai đầu phố
     for (const [model, x] of [['building_C', -9], ['building_G', 9], ['building_B', -13], ['building_H', 13]] as const) jobs.push(put(model, x, ROW_Z, 0, 1.1));
@@ -484,9 +438,9 @@ export class Street {
     });
   }
 
-  /** Bật/tắt tua nhanh ngày đêm; tắt thì trời quay về giờ máy. */
-  setWarp(on: boolean): void {
-    this.warp = on;
+  /** Đặt giờ trong ngày cho trời, đèn đường... (đồng bộ với đồng hồ khách sạn). */
+  setHour(hour: number): void {
+    this.hour = hour;
   }
 
   /** Đặt mũi tên lên tòa đang chọn hoặc đang rê chuột (null = ẩn). */
@@ -496,22 +450,12 @@ export class Street {
 
   update(dt: number): void {
     this.time += dt;
-    this.hour = this.warp ? (this.hour + dt * WARP_HOURS_PER_SEC) % 24 : clockHour();
     this.applyDaylight(this.hour);
     for (const c of this.cars) {
       if (c.speed === 0) continue;
       c.obj.position.x += c.speed * dt;
       if (c.obj.position.x > 15) c.obj.position.x = -15;
       if (c.obj.position.x < -15) c.obj.position.x = 15;
-    }
-    for (const f of this.flags) {
-      const pos = f.geo.attributes.position!;
-      for (let i = 0; i < pos.count; i++) {
-        const x = f.base[i * 3]!;
-        pos.setZ(i, Math.sin(x * 14 - this.time * 4 + f.phase) * 0.03 * (x / FLAG_W)); // sóng lớn dần về mép tự do
-      }
-      pos.needsUpdate = true;
-      f.geo.computeVertexNormals();
     }
     for (const w of this.walkers) {
       w.mixer.update(dt);
@@ -542,11 +486,7 @@ const LOBBY: Record<string, Array<[number, number, number, number]>> = {
   building_D: [[-0.577, 0.709, 0.131, 0.033], [-0.191, 0.607, 0.143, 0.245], [0.196, 0.607, 0.151, 0.245], [0.576, 0.607, 0.139, 0.245]], // ô kính trên cửa gỗ, ba cửa sổ
   building_E: [[-0.729, 0.577, 0.484, 0.296], [-0.138, 0.512, 0.094, 0.332], [0.431, 0.577, 0.485, 0.296]], // hai ô kính lớn, cửa kính
 };
-const WARP_HOURS_PER_SEC = 0.5; // tua: một ngày đêm trong khoảng 48 giây
 const SKY_Z = -32; // tấm trời xa: sao, trăng, mặt trời (sau mép cỏ ở z = -20)
-const WALL_HALF = 0.9; // nửa bề rộng tường mặt tiền (đo từ ảnh dựng)
-const FLAG_W = 0.24;
-const FLAG_H = 0.16;
 /** Ánh đèn trong phòng nhìn qua kính: sáng ấm ở giữa-dưới, mờ dần ra mép để không thành khối phẳng. */
 let windowGlowTexture: CanvasTexture | null = null;
 function windowGlowTex(): CanvasTexture {
@@ -606,30 +546,6 @@ function beamTex(): CanvasTexture {
   beamTexture = new CanvasTexture(cv);
   beamTexture.colorSpace = SRGBColorSpace;
   return beamTexture;
-}
-
-/** Lá cờ đỏ sao vàng: texture dùng chung, hình học riêng từng lá để gợn sóng độc lập. */
-let flagTexture: CanvasTexture | null = null;
-function flagTex(): CanvasTexture {
-  if (flagTexture) return flagTexture;
-  const cv = document.createElement('canvas');
-  cv.width = 300;
-  cv.height = 200;
-  const ctx = cv.getContext('2d')!;
-  ctx.fillStyle = '#da251d';
-  ctx.fillRect(0, 0, 300, 200);
-  ctx.fillStyle = '#ffff00';
-  ctx.beginPath();
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 === 0 ? 62 : 24;
-    const a = -Math.PI / 2 + (i * Math.PI) / 5;
-    ctx[i === 0 ? 'moveTo' : 'lineTo'](150 + r * Math.cos(a), 100 + r * Math.sin(a));
-  }
-  ctx.closePath();
-  ctx.fill();
-  flagTexture = new CanvasTexture(cv);
-  flagTexture.colorSpace = SRGBColorSpace;
-  return flagTexture;
 }
 
 /** Biển tên trên nóc nhà: bảng gỗ bo cạnh với chữ vẽ bằng canvas, hai chân đỡ. */

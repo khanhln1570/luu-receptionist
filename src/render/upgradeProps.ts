@@ -40,11 +40,11 @@ export function buildUpgradeProps(theme: LobbyTheme, owned: readonly string[]): 
   }
 
   if (has('renovate')) {
-    for (const x of [-6.9, 6.9]) {
+    for (const x of [-6.6, 6.6]) {
       const t = topiary(1.15, true);
-      t.position.set(x, 0, 1.0);
+      t.position.set(x, 0, 0.6);
       group.add(t);
-      block(x, 1.0, 0.7, 0.7);
+      block(x, 0.6, 0.7, 0.7);
     }
   }
 

@@ -1,6 +1,7 @@
-import { Box3, CylinderGeometry, LoopRepeat, MathUtils, Mesh, MeshStandardMaterial, Vector3, type AnimationAction, type Bone, type Camera, type Scene } from 'three';
+import { Box3, CylinderGeometry, LoopOnce, LoopRepeat, MathUtils, Mesh, MeshStandardMaterial, Vector3, type AnimationAction, type Bone, type Camera, type Scene } from 'three';
 import type { Game } from '../core/game';
-import { LOOKS, lookIdFor } from '../data/looks';
+import { LOOKS, POLICE, lookIdFor } from '../data/looks';
+import type { AnimationClip } from 'three';
 import { NavGrid, type Pt, type Rect } from './navigation';
 import { createCharacter, loadClips, type Character } from './characters';
 import type { DoorRig } from './lobby';
@@ -57,7 +58,26 @@ interface Actor {
   goalKey: string;
   sit: number; // 0 đứng, 1 ngồi
   legs: Array<{ bone: Bone; angle: number }>;
+  emote: AnimationAction | null; // động tác đặc biệt (đánh nhau, bị bắt...)
+  emoteName: string;
+  jx: number; // độ rung ngang hiện tại khi đánh nhau
 }
+
+/** Cảnh đánh nhau trong sảnh: hai người đánh nhau, cảnh sát (nếu được gọi) tới còng rồi tất cả ra về. */
+const FIGHT_ID = 'danh-nhau-sanh';
+const ROB_ID = 'co-cuop';
+const COP_LINE = 'Theo điều 1 khoản 2 bộ luật hình sự...';
+const ROB_LINE = 'Thằng nào có tiền thì nạp tiền vào donate cho tao! Ít thì 5 quả trứng, nhiều thì 1 tên lửa!';
+const FIGHT_FALL_AFTER = 20; // giây để mặc hai người đánh nhau thì một người ngã
+const FIGHTERS = LOOKS;
+const FIGHT_LOOK: Record<string, string> = {
+  'fight-a': FIGHTERS[0]!.id,
+  'fight-b': FIGHTERS[Math.min(3, FIGHTERS.length - 1)]!.id,
+  'robber-1': FIGHTERS[Math.min(1, FIGHTERS.length - 1)]!.id,
+  'robber-2': FIGHTERS[Math.min(5, FIGHTERS.length - 1)]!.id,
+  'cop-1': 'canh-sat-1',
+  'cop-2': 'canh-sat-2',
+};
 
 /** Hiển thị khách 3D trong sảnh: vào qua cửa, xếp hàng, ngồi chờ, đứng ở quầy và đi ra. */
 export class GuestScene {
@@ -70,6 +90,21 @@ export class GuestScene {
   private ambient = new Map<string, Ambient>();
   private clock = 0;
   private nextAmbient = 6;
+  private clips: Map<string, AnimationClip> | null = null;
+  private fightPhase: 'none' | 'brawl' | 'rob' | 'join' | 'police' | 'exit' = 'none';
+  private robScene = false;
+  private bossId = '';
+  private joinSeen = 0;
+  private stopSeen = 0;
+  private arrestSeen = 0;
+  private arrest = false;
+  private copsCame = false;
+  private joinKind: 'fight' | 'stop' = 'fight';
+  /** main.ts báo: lễ tân đã tới nơi / đã đánh hoặc nằm đủ lâu thì cảnh mới được kết thúc. */
+  joinArrived = false;
+  joinDone = false;
+  private fightT = 0;
+  private policeSeen = 0;
 
   constructor(
     private readonly scene: Scene,
@@ -93,12 +128,15 @@ export class GuestScene {
     this.ambient.clear();
     this.clock = 0;
     this.nextAmbient = 6;
+    this.fightPhase = 'none';
+    this.fightT = 0;
   }
 
   private async spawn(id: string, name: string, mug = false): Promise<void> {
     this.loading.add(id);
-    const look = LOOKS.find((l) => l.id === lookIdFor(name))!;
+    const look = [...LOOKS, ...POLICE].find((l) => l.id === (FIGHT_LOOK[id] ?? lookIdFor(name)))!;
     const clips = await loadClips();
+    this.clips = clips;
     const char = await createCharacter(look);
     if (!this.loading.delete(id)) return; // đã bị xóa (đổi ngày) trong lúc tải
     const box = new Box3();
@@ -134,7 +172,7 @@ export class GuestScene {
       else if (/^lowerleg/.test(o.name)) legs.push({ bone, angle: SIT_SHIN });
     });
     this.scene.add(char.root);
-    this.actors.set(id, { char, walk, idle, seat: null, y: 0, yaw: Math.PI, moving: false, path: [], goalKey: '', sit: 0, legs });
+    this.actors.set(id, { char, walk, idle, seat: null, y: 0, yaw: Math.PI, moving: false, path: [], goalKey: '', sit: 0, legs, emote: null, emoteName: '', jx: 0 });
   }
 
 
@@ -239,7 +277,7 @@ export class GuestScene {
     if (!game) return;
 
     // Vị trí đích theo từng khách đang có trong game
-    const targets = new Map<string, { pos: Vector3; yaw: number; seat: number | null }>();
+    const targets = new Map<string, { pos: Vector3; yaw: number; seat: number | null; emote?: string }>();
     const names = new Map<string, string>();
     const takenSeats = new Set<number>();
     const cur = game.queue.current;
@@ -274,6 +312,7 @@ export class GuestScene {
       }
     });
 
+    this.updateFight(game, dt, names, targets);
     this.updateAmbient(game, dt, names, targets, takenSeats);
     const mugIds = this.ambient;
     for (const [id, name] of names) if (!this.actors.has(id) && !this.loading.has(id)) void this.spawn(id, name, mugIds.has(id));
@@ -286,8 +325,13 @@ export class GuestScene {
       const here = { x: root.position.x, z: root.position.z };
 
       // Đổi đích thì tìm đường mới (đi vòng đồ đạc); ghế thì tới điểm đứng trước ghế rồi mới bước vào ngồi
+      const kneel = this.fightPhase === 'rob' && !(id in FIGHT_LOOK) && id !== game?.queue.current?.arrival.id;
       const key = t ? (t.seat != null ? `seat${t.seat}` : goalKeyOf(t.pos)) : 'door';
-      if (key !== a.goalKey) {
+      if (kneel) {
+        // Có cướp: đứng yên và quỳ xuống tại chỗ; hết cướp thì tìm đường đi tiếp
+        a.path = [];
+        a.goalKey = '';
+      } else if (key !== a.goalKey) {
         a.goalKey = key;
         if (!t) a.path = [...this.routeFrom(here, DOOR), OUTSIDE];
         else if (t.seat != null) {
@@ -315,14 +359,32 @@ export class GuestScene {
       a.moving = a.path.length > 0 && dt > 0;
       if (a.path.length === 0 && t) a.yaw = turn(a.yaw, t.yaw, 8 * dt);
 
-      const sitting = a.path.length === 0 && t?.seat != null;
+      const sitting = kneel || (a.path.length === 0 && t?.seat != null);
       a.sit = MathUtils.lerp(a.sit, sitting ? 1 : 0, Math.min(1, 8 * Math.max(dt, 0.016)));
       a.y = -SIT_DROP * a.sit;
       root.position.y = a.y;
       root.rotation.y = a.yaw;
+      const want = t?.emote && a.path.length === 0 ? t.emote : '';
+      if (want !== a.emoteName) {
+        a.emote?.fadeOut(0.15);
+        a.emote = null;
+        a.emoteName = want;
+        const clip = want ? this.clips?.get(want) : undefined;
+        if (clip) {
+          const act = a.char.mixer.clipAction(clip).reset();
+          if (want.startsWith('Death')) {
+            act.setLoop(LoopOnce, 1);
+            act.clampWhenFinished = true;
+          } else act.setLoop(LoopRepeat, Infinity);
+          a.emote = act.fadeIn(0.15).play();
+        }
+      }
+      const jx = a.emote && want.startsWith('Hit') ? Math.sin(this.clock * 11 + (id === 'fight-b' ? 2 : 0)) * 0.06 : 0;
+      root.position.x += jx - a.jx;
+      a.jx = jx;
       const w = a.moving ? 1 : 0;
       a.walk.setEffectiveWeight(MathUtils.lerp(a.walk.getEffectiveWeight(), w, Math.min(1, 12 * dt)));
-      a.idle.setEffectiveWeight(1 - a.walk.getEffectiveWeight());
+      a.idle.setEffectiveWeight(a.emote ? 0 : 1 - a.walk.getEffectiveWeight());
       a.char.mixer.update(dt);
       if (a.sit > 0.01) for (const l of a.legs) l.bone.rotateX(l.angle * a.sit); // dáng ngồi: gập đùi ra trước, cẳng chân rủ xuống
       if (Math.hypot(root.position.x - DOOR.x, root.position.z - DOOR_PLANE_Z) < 2.8) nearDoor = true;
@@ -333,6 +395,99 @@ export class GuestScene {
     }
     this.doorOpen = MathUtils.lerp(this.doorOpen, nearDoor ? 1 : 0, Math.min(1, 6 * Math.max(dt, 0.016)));
     this.door.setOpen(this.doorOpen);
+  }
+
+  /**
+   * Cảnh đánh nhau: khi khách ở quầy đang nói về vụ đánh nhau thì hai người đánh nhau giữa sảnh.
+   * Xử lý xong, nếu có gọi cảnh sát thì hai cảnh sát vào còng họ, sau đó tất cả đi ra cửa.
+   */
+  /** Lễ tân đang lao vào đám đánh nhau (main.ts điều khiển nhân vật chính): đánh chung hoặc can ngăn rồi bị đánh gục. */
+  /** Lễ tân bị bắt: 'wait' khi cảnh sát đang tới còng, 'led' khi cảnh sát áp giải ra cửa. */
+  get arrestStage(): 'wait' | 'led' | null {
+    if (!this.arrest) return null;
+    return this.fightPhase === 'police' ? 'wait' : this.fightPhase === 'exit' ? 'led' : null;
+  }
+
+  /** Đang có cướp: khách trong sảnh quỳ xuống, lễ tân nằm dưới bàn. */
+  get robbery(): boolean {
+    return this.fightPhase === 'rob';
+  }
+
+  get joinMode(): 'fight' | 'stop' | null {
+    return this.fightPhase === 'join' ? this.joinKind : null;
+  }
+
+  private updateFight(game: Game, dt: number, names: Map<string, string>, targets: Map<string, { pos: Vector3; yaw: number; seat: number | null; emote?: string }>): void {
+    const fighting = game.queue.current?.arrival.scenarioId === FIGHT_ID;
+    const robbing = game.queue.current?.arrival.scenarioId === ROB_ID;
+    if (robbing) this.bossId = game.queue.current!.arrival.id;
+    this.fightT += dt;
+    if (robbing && this.fightPhase === 'none') {
+      this.fightPhase = 'rob';
+      this.robScene = true;
+      this.fightT = 0;
+      this.policeSeen = game.policeCalls;
+    } else if (!robbing && this.fightPhase === 'rob') {
+      this.fightPhase = game.policeCalls > this.policeSeen ? 'police' : 'exit';
+      this.fightT = 0;
+    } else if (fighting && this.fightPhase === 'none') {
+      this.robScene = false;
+      this.fightPhase = 'brawl';
+      this.fightT = 0;
+      this.policeSeen = game.policeCalls;
+      this.joinSeen = game.joinedFights;
+      this.stopSeen = game.intervened;
+      this.arrestSeen = game.arrests;
+      this.copsCame = false;
+    } else if (!fighting && this.fightPhase === 'brawl') {
+      this.arrest = game.arrests > this.arrestSeen;
+      const police = game.policeCalls > this.policeSeen || this.copsCame || this.arrest;
+      if (game.joinedFights > this.joinSeen || game.intervened > this.stopSeen) {
+        this.joinKind = game.intervened > this.stopSeen ? 'stop' : 'fight';
+        this.fightPhase = 'join';
+        this.joinArrived = false;
+        this.joinDone = false;
+      } else this.fightPhase = police ? 'police' : 'exit';
+      this.fightT = 0;
+    } else if (this.fightPhase === 'join' && (this.joinDone || this.fightT > 30)) {
+      this.fightPhase = game.policeCalls > this.policeSeen || this.copsCame || this.arrest ? 'police' : 'exit';
+      this.fightT = 0;
+    } else if (this.fightPhase === 'police' && this.fightT > (this.arrest ? 9 : 7)) {
+      this.fightPhase = 'exit';
+    } else if (this.fightPhase === 'exit' && ![...this.actors.keys(), ...this.loading].some((id) => id in FIGHT_LOOK)) {
+      this.fightPhase = 'none';
+      this.arrest = false;
+    }
+    const phase = this.fightPhase;
+    if (phase === 'none' || phase === 'exit') return;
+    const put = (id: string, x: number, yaw: number, emote: string, z = -5.6) => {
+      names.set(id, id);
+      targets.set(id, { pos: new Vector3(x, 0, z), yaw, seat: null, emote });
+    };
+    if (this.robScene) {
+      // Đồng bọn đứng hai bên quầy canh chừng; cướp chính là khách đang ở quầy
+      const caught = phase === 'police';
+      put('robber-1', -1.7, 0, caught ? 'Idle_B' : 'Interact', -3.2);
+      put('robber-2', 1.7, 0, caught ? 'Idle_B' : 'Interact', -3.2);
+      if (caught) {
+        put('cop-1', -2.7, Math.PI / 2, 'Interact', -3.2);
+        put('cop-2', 2.7, -Math.PI / 2, 'Interact', -3.2);
+      }
+      return;
+    }
+    const scuffle = phase === 'brawl' || phase === 'join';
+    // Để mặc quá lâu thì một người gục xuống
+    const down = phase === 'brawl' && this.fightT > FIGHT_FALL_AFTER;
+    // Có người ngã mà vẫn chưa ai xử lý thì cảnh sát tự tới
+    if (phase === 'brawl' && this.fightT > FIGHT_FALL_AFTER + 6) this.copsCame = true;
+    const copsHere = phase === 'police' || (phase === 'brawl' && this.copsCame);
+    const stopping = phase === 'join' && this.joinKind === 'stop'; // can ngăn: hai người khựng lại nhìn lễ tân gục
+    put('fight-a', -0.7, Math.PI / 2, down ? 'Death_A' : scuffle && !(stopping && this.joinArrived) ? 'Hit_A' : 'Idle_B');
+    put('fight-b', 0.7, -Math.PI / 2, down ? 'Idle_B' : scuffle && !(stopping && this.joinArrived) ? 'Hit_B' : 'Idle_B');
+    if (copsHere) {
+      put('cop-1', this.arrest ? -2.8 : -1.9, Math.PI / 2, 'Interact');
+      put('cop-2', 1.9, -Math.PI / 2, 'Interact');
+    }
   }
 
   /** Đường đi; khách đang ở ngoài cửa thì phải đi qua cửa trước. */
@@ -358,6 +513,28 @@ export class GuestScene {
   }
 
   /** Điểm trên đầu một người theo pixel, để đặt bong bóng thoại; null nếu người đó đã đi. */
+  /** Lời thoại đang hiện trên đầu hai người đánh nhau (lần lượt từng người). */
+  fightLines(): Array<{ id: string; text: string }> {
+    const lines: Array<{ id: string; text: string }> = [];
+    const arrived = (id: string) => {
+      const a = this.actors.get(id);
+      return !!a && a.path.length === 0;
+    };
+    // Cảnh sát vào (bất kỳ trường hợp nào): đọc luật
+    const copsHere = this.fightPhase === 'police' || (this.fightPhase === 'brawl' && this.copsCame);
+    if (copsHere && arrived('cop-1')) lines.push({ id: 'cop-1', text: COP_LINE });
+    if (this.robScene) {
+      // Cướp (khách đang ở quầy) hét câu đòi donate trên đầu mình
+      if (this.fightPhase === 'rob' && arrived(this.bossId)) lines.push({ id: this.bossId, text: ROB_LINE });
+      return lines;
+    }
+    if (this.fightPhase === 'brawl' || (this.fightPhase === 'join' && this.joinKind === 'fight')) {
+      const id = Math.floor(this.fightT / 2.2) % 2 === 0 ? 'fight-a' : 'fight-b';
+      if (arrived(id)) lines.push({ id, text: id === 'fight-a' ? 'Chan đê!' : 'Mày chan bố mày đê!' });
+    }
+    return lines;
+  }
+
   headScreen(id: string, camera: Camera, w: number, h: number): { x: number; y: number } | null {
     const a = this.actors.get(id);
     return a ? this.toScreen(a, HEIGHT + 0.25 - SIT_DROP * a.sit, camera, w, h) : null;

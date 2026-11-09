@@ -13,6 +13,11 @@ export interface Effects {
   oldRoom?: 'dirty' | 'broken'; // tình trạng phòng cũ sau khi đổi
   checkIn?: 'upgrade' | 'lower'; // xếp phòng khác loại cho khách đã đặt (overbooking)
   cancel?: boolean; // hủy đặt phòng, khách ra về (overbooking)
+  join?: boolean; // lễ tân nhảy vào đánh chung (hiện trong cảnh 3D)
+  arrest?: boolean; // lễ tân bị cảnh sát bắt, bị đưa ra khỏi khách sạn (coi như nghỉ việc)
+  intervene?: boolean; // lễ tân lao vào can ngăn và bị đánh gục (hiện trong cảnh 3D)
+  police?: boolean; // cảnh sát tới sảnh (hiện trong cảnh 3D)
+  walkOut?: boolean; // lễ tân bỏ chạy nghỉ việc: kết thúc ca ngay
 }
 
 export interface ScenarioOption {
@@ -56,7 +61,7 @@ export function variablesFor(guestName: string, roomId: string | undefined, type
 
 const TYPES: readonly ScenarioType[] = ['incident', 'overbooking', 'special'];
 const REQUIREMENTS: readonly Requirement[] = ['spareRoom', 'upgradeRoom', 'lowerRoom'];
-const EFFECT_KEYS = ['satisfaction', 'money', 'task', 'moveRoom', 'oldRoom', 'checkIn', 'cancel'];
+const EFFECT_KEYS = ['satisfaction', 'money', 'task', 'moveRoom', 'oldRoom', 'checkIn', 'cancel', 'police', 'join', 'intervene', 'arrest', 'walkOut'];
 
 /** Kiểm tra dữ liệu kịch bản đọc từ JSON. Lỗi nào cũng báo kèm id tình huống để sửa file. */
 export function validateScenarios(data: unknown): Scenario[] {

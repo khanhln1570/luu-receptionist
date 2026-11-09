@@ -29,6 +29,7 @@ export interface DayParams {
   overbookingRate?: number; // xác suất khách đặt trước bị đặt trùng
   specialRate?: number; // xác suất khách đến là tình huống đặc biệt
   roomTypes?: readonly RoomType[]; // loại phòng khách sạn có; không có thì khách có thể đòi mọi loại
+  nightShift?: boolean; // ca kéo tới sáng hôm sau: lễ tân phải ngủ, ban đêm có vài khách muộn
 }
 
 export interface DaySchedule {

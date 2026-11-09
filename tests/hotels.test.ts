@@ -63,7 +63,11 @@ describe('khách sạn thật trong data/hotels', () => {
     for (const h of HOTELS) {
       const game = new Game(h.config, 42, scenarios);
       let guard = 0;
-      while (!game.isOver && guard++ < 10_000) game.tick(5);
+      while (!game.isOver && guard++ < 10_000) {
+        if (game.sleepPrompt) game.stayAwake(); // tick dừng chờ người chơi trả lời
+        if (game.knock) game.answerKnock(false);
+        game.tick(5);
+      }
       expect(game.isOver, h.id).toBe(true);
       expect(game.result.stars).toBeGreaterThanOrEqual(1);
     }
