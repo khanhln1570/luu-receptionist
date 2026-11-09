@@ -58,40 +58,6 @@
     ]
   },
   {
-    "id": "on-ao",
-    "type": "incident",
-    "lines": [
-      "Phòng bên cạnh phòng {phong} ồn quá, tôi không ngủ được."
-    ],
-    "options": [
-      {
-        "text": "Gọi nhắc nhở phòng bên",
-        "result": "Bên kia nhỏ tiếng lại, khách tạm yên.",
-        "effects": {
-          "satisfaction": 3
-        }
-      },
-      {
-        "text": "Đổi sang phòng yên tĩnh hơn",
-        "result": "Khách chuyển phòng, phòng cũ cần dọn lại.",
-        "requires": "spareRoom",
-        "effects": {
-          "moveRoom": "same",
-          "oldRoom": "dirty",
-          "satisfaction": 8
-        }
-      },
-      {
-        "text": "Giảm 50.000đ tiền phòng",
-        "result": "Khách nguôi giận nhờ được giảm giá.",
-        "effects": {
-          "money": -50000,
-          "satisfaction": 6
-        }
-      }
-    ]
-  },
-  {
     "id": "phong-ban",
     "type": "incident",
     "lines": [
@@ -155,30 +121,6 @@
         "result": "{ten} nhìn bạn không nói gì.",
         "effects": {
           "satisfaction": -15
-        }
-      }
-    ]
-  },
-  {
-    "id": "mat-chia",
-    "type": "incident",
-    "lines": [
-      "Tôi lỡ làm mất chìa khóa phòng {phong}."
-    ],
-    "options": [
-      {
-        "text": "Cấp chìa mới, thu phí 50.000đ",
-        "result": "Khách trả phí và nhận chìa mới.",
-        "effects": {
-          "money": 50000,
-          "satisfaction": -2
-        }
-      },
-      {
-        "text": "Cấp chìa mới miễn phí",
-        "result": "Khách rất hài lòng vì được thông cảm.",
-        "effects": {
-          "satisfaction": 5
         }
       }
     ]
@@ -286,129 +228,6 @@
         "effects": {
           "cancel": true,
           "satisfaction": -20
-        }
-      }
-    ]
-  },
-  {
-    "id": "nham-ngay",
-    "type": "overbooking",
-    "lines": [
-      "Tôi đặt {loai} cho tối nay, tên {ten}.",
-      "Nhân viên nói lịch bị nhập nhầm, phòng đã giao cho khách khác."
-    ],
-    "options": [
-      {
-        "text": "Nâng lên {loaiCao} không tính thêm tiền",
-        "result": "Khách vui vẻ nhận phòng mới.",
-        "requires": "upgradeRoom",
-        "effects": {
-          "checkIn": "upgrade",
-          "satisfaction": 9
-        }
-      },
-      {
-        "text": "Xếp {loaiThap}, giảm 100.000đ",
-        "result": "Khách đồng ý vì được giảm giá.",
-        "requires": "lowerRoom",
-        "effects": {
-          "checkIn": "lower",
-          "money": -100000,
-          "satisfaction": -2
-        }
-      },
-      {
-        "text": "Hủy đặt phòng, hoàn tiền cọc",
-        "result": "Khách thất vọng nhưng nhận lại tiền cọc.",
-        "effects": {
-          "cancel": true,
-          "money": -100000,
-          "satisfaction": -10
-        }
-      }
-    ]
-  },
-  {
-    "id": "khach-quen",
-    "type": "special",
-    "lines": [
-      "Tôi là khách quen đây, lần sau cho tôi giảm giá nhé?"
-    ],
-    "options": [
-      {
-        "text": "Tặng voucher giảm 10%",
-        "result": "Khách quen hài lòng, hứa sẽ quay lại.",
-        "effects": {
-          "money": -30000,
-          "satisfaction": 8
-        }
-      },
-      {
-        "text": "Giải thích chính sách không giảm giá",
-        "result": "Khách hơi hụt hẫng.",
-        "effects": {
-          "satisfaction": -4
-        }
-      }
-    ]
-  },
-  {
-    "id": "hoi-duong",
-    "type": "special",
-    "lines": [
-      "Cho tôi hỏi đường ra sân bay đi thế nào?"
-    ],
-    "options": [
-      {
-        "text": "Chỉ đường và gọi taxi giúp",
-        "result": "Khách cảm ơn rối rít.",
-        "effects": {
-          "satisfaction": 5
-        }
-      },
-      {
-        "text": "Đưa bản đồ khu vực",
-        "result": "Khách nhận bản đồ.",
-        "effects": {
-          "satisfaction": 2
-        }
-      },
-      {
-        "text": "Nói không rõ",
-        "result": "{ten} đi nơi khác hỏi.",
-        "effects": {
-          "satisfaction": -3
-        }
-      }
-    ]
-  },
-  {
-    "id": "gui-hanh-ly",
-    "type": "special",
-    "lines": [
-      "Tôi muốn gửi hành lý vài tiếng, có được không?"
-    ],
-    "options": [
-      {
-        "text": "Nhận gửi miễn phí",
-        "result": "Khách rất vui vì được giúp đỡ.",
-        "effects": {
-          "satisfaction": 6
-        }
-      },
-      {
-        "text": "Nhận gửi, thu 20.000đ",
-        "result": "Khách trả phí gửi hành lý.",
-        "effects": {
-          "money": 20000,
-          "satisfaction": 1
-        }
-      },
-      {
-        "text": "Từ chối",
-        "result": "Khách kéo hành lý đi, không vui.",
-        "effects": {
-          "satisfaction": -5
         }
       }
     ]
@@ -636,41 +455,6 @@
     ]
   },
   {
-    "id": "ga-giuong-ban",
-    "type": "incident",
-    "lines": [
-      "Ga giường phòng {phong} có vết bẩn, tôi muốn thay ngay."
-    ],
-    "options": [
-      {
-        "text": "Gọi buồng phòng thay ga gấp",
-        "result": "Buồng phòng mang ga sạch lên.",
-        "effects": {
-          "task": "service",
-          "satisfaction": 6
-        }
-      },
-      {
-        "text": "Đổi phòng, giảm 50.000đ",
-        "result": "Khách nhận phòng mới, nguôi giận.",
-        "effects": {
-          "moveRoom": "same",
-          "oldRoom": "dirty",
-          "money": -50000,
-          "satisfaction": 8
-        },
-        "requires": "spareRoom"
-      },
-      {
-        "text": "Nói đó là vết cũ, không sao",
-        "result": "{ten} tức giận ra mặt.",
-        "effects": {
-          "satisfaction": -15
-        }
-      }
-    ]
-  },
-  {
     "id": "quen-khoa",
     "type": "incident",
     "lines": [
@@ -721,67 +505,6 @@
         "result": "Khách hơi mất thời gian nhưng chấp nhận.",
         "effects": {
           "satisfaction": -2
-        }
-      }
-    ]
-  },
-  {
-    "id": "may-lanh-on",
-    "type": "incident",
-    "lines": [
-      "Máy lạnh phòng {phong} kêu rất to, không ngủ nổi."
-    ],
-    "options": [
-      {
-        "text": "Gọi bảo trì kiểm tra",
-        "result": "Bảo trì chỉnh lại máy.",
-        "effects": {
-          "task": "fix",
-          "satisfaction": 5
-        }
-      },
-      {
-        "text": "Đổi phòng khác",
-        "result": "Khách chuyển phòng, phòng cũ chờ sửa máy lạnh.",
-        "effects": {
-          "moveRoom": "same",
-          "oldRoom": "broken",
-          "satisfaction": 8
-        },
-        "requires": "spareRoom"
-      },
-      {
-        "text": "Khuyên khách tắt máy mở cửa sổ",
-        "result": "{ten} không hài lòng.",
-        "effects": {
-          "satisfaction": -9
-        }
-      }
-    ]
-  },
-  {
-    "id": "mua-nang",
-    "type": "incident",
-    "lines": [
-      "Tôi muốn nâng lên {loaiCao}, trả thêm cũng được, phòng này chật quá."
-    ],
-    "options": [
-      {
-        "text": "Nâng hạng, thu thêm 200.000đ",
-        "result": "Khách chuyển phòng rộng hơn, rất vui.",
-        "effects": {
-          "moveRoom": "upgrade",
-          "oldRoom": "dirty",
-          "money": 200000,
-          "satisfaction": 8
-        },
-        "requires": "upgradeRoom"
-      },
-      {
-        "text": "Từ chối lịch sự",
-        "result": "Khách tiếc nhưng hiểu.",
-        "effects": {
-          "satisfaction": -3
         }
       }
     ]
@@ -897,68 +620,6 @@
     ]
   },
   {
-    "id": "doi-tien",
-    "type": "special",
-    "lines": [
-      "Cho tôi hỏi đổi ngoại tệ ở đâu gần đây?"
-    ],
-    "options": [
-      {
-        "text": "Chỉ tiệm đổi tiền uy tín gần khách sạn",
-        "result": "Khách cảm ơn.",
-        "effects": {
-          "satisfaction": 4
-        }
-      },
-      {
-        "text": "Đổi giúp với phí dịch vụ 30.000đ",
-        "result": "Khách trả phí và hài lòng.",
-        "effects": {
-          "money": 30000,
-          "satisfaction": 3
-        }
-      },
-      {
-        "text": "Nói không biết",
-        "result": "{ten} đi nơi khác hỏi.",
-        "effects": {
-          "satisfaction": -4
-        }
-      }
-    ]
-  },
-  {
-    "id": "gui-xe",
-    "type": "special",
-    "lines": [
-      "Tôi có xe máy thuê, gửi ở đâu an toàn?"
-    ],
-    "options": [
-      {
-        "text": "Chỉ bãi gửi xe trong khuôn viên",
-        "result": "Khách yên tâm.",
-        "effects": {
-          "satisfaction": 4
-        }
-      },
-      {
-        "text": "Cho gửi miễn phí tại sảnh",
-        "result": "Khách rất hài lòng.",
-        "effects": {
-          "money": -10000,
-          "satisfaction": 6
-        }
-      },
-      {
-        "text": "Bảo khách tự tìm chỗ",
-        "result": "{ten} bực bội.",
-        "effects": {
-          "satisfaction": -6
-        }
-      }
-    ]
-  },
-  {
     "id": "tra-muon",
     "type": "special",
     "lines": [
@@ -1016,67 +677,6 @@
         "result": "{ten} phàn nàn bỏ đi.",
         "effects": {
           "satisfaction": -9
-        }
-      }
-    ]
-  },
-  {
-    "id": "chup-anh",
-    "type": "special",
-    "lines": [
-      "Bạn chụp giúp tôi một tấm hình ở sảnh được không?"
-    ],
-    "options": [
-      {
-        "text": "Vui vẻ chụp giúp vài tấm",
-        "result": "Khách rất thích ảnh đẹp.",
-        "effects": {
-          "satisfaction": 6
-        }
-      },
-      {
-        "text": "Chụp nhanh một tấm",
-        "result": "Khách cảm ơn.",
-        "effects": {
-          "satisfaction": 2
-        }
-      },
-      {
-        "text": "Từ chối vì đang bận",
-        "result": "{ten} hơi hụt hẫng.",
-        "effects": {
-          "satisfaction": -3
-        }
-      }
-    ]
-  },
-  {
-    "id": "hoi-quan-an",
-    "type": "special",
-    "lines": [
-      "Gần đây có quán nào ăn ngon, giá hợp lý không?"
-    ],
-    "options": [
-      {
-        "text": "Giới thiệu 2 quán địa phương và vẽ đường",
-        "result": "Khách rất hài lòng.",
-        "effects": {
-          "satisfaction": 6
-        }
-      },
-      {
-        "text": "Đưa tờ rơi nhà hàng khách sạn",
-        "result": "Khách nhận tờ rơi.",
-        "effects": {
-          "money": 15000,
-          "satisfaction": 0
-        }
-      },
-      {
-        "text": "Nói không rõ khu vực",
-        "result": "{ten} thất vọng.",
-        "effects": {
-          "satisfaction": -4
         }
       }
     ]

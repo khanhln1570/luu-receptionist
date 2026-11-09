@@ -155,7 +155,15 @@ export class GuestScene {
       if (w.arrival.reservationCode) busy.add(w.arrival.reservationCode);
     }
     const byId = (id: string) => game.reservations.find((r) => `amb-${r.id}` === id);
+    // Người lạ có vai ẩn: ở sảnh đến khi hết giờ hoặc bị xử lý (do game quyết định), không giới hạn số lượng
+    const strangers = new Map(game.activeVisitors().map((v) => [`vis-${v.id}`, v]));
+    const stopsOf = () => Array.from({ length: 2 + Math.floor(Math.random() * 3) }, () => ({ ...this.nav!.randomPoint(Math.random), yaw: (Math.random() - 0.5) * 2.4, wait: 3 + Math.random() * 6 }));
+    if (this.nav) for (const id of strangers.keys()) if (!this.ambient.has(id)) this.ambient.set(id, { stops: stopsOf(), stage: 0, waitUntil: null, seatWanted: true, sitUntil: null });
     for (const [id] of [...this.ambient]) {
+      if (id.startsWith('vis-')) {
+        if (!strangers.has(id)) this.ambient.delete(id);
+        continue;
+      }
       const r = byId(id);
       if (!r || r.status !== 'checked_in' || busy.has(r.code) || game.isOver) this.ambient.delete(id); // trả phòng, ra quầy hoặc hết ngày
     }
@@ -171,7 +179,8 @@ export class GuestScene {
 
     const seatOf = new Map<string, number>();
     for (const [id, st] of [...this.ambient]) {
-      names.set(id, byId(id)!.guestName);
+      const stranger = strangers.get(id);
+      names.set(id, stranger ? stranger.name : byId(id)!.guestName);
       const actor = this.actors.get(id);
       if (st.stage < st.stops.length) {
         // Đang đi dạo: tới điểm thì đứng nhìn quanh một lúc rồi sang điểm kế
@@ -201,12 +210,13 @@ export class GuestScene {
         seat = choices[Math.floor(Math.random() * choices.length)] ?? null;
       }
       if (seat == null) {
-        this.ambient.delete(id); // hết ghế: về phòng
+        if (stranger && this.nav) Object.assign(st, { stops: stopsOf(), stage: 0, waitUntil: null }); // người lạ chưa có ghế thì đi dạo tiếp
+        else this.ambient.delete(id); // hết ghế: về phòng
         continue;
       }
       takenSeats.add(seat);
       seatOf.set(id, seat);
-      if (actor && actor.sit > 0.95) {
+      if (actor && actor.sit > 0.95 && !stranger) {
         if (st.sitUntil === null) st.sitUntil = this.clock + 40 + Math.random() * 40;
         else if (this.clock >= st.sitUntil) this.ambient.delete(id);
       }
