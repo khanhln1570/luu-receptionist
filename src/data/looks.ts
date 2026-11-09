@@ -4,7 +4,7 @@
  * Dữ liệu thuần, dùng cho công cụ render portrait (tools/portrait.ts) và cho game.
  */
 export type Model = 'Ranger' | 'Mage' | 'Rogue' | 'Barbarian';
-export type Accessory = 'sunhat' | 'shades' | 'camera';
+export type Accessory = 'sunhat' | 'shades' | 'camera' | 'policecap';
 
 /** Ô trên bảng màu (hàng,cột) theo từng vai trò; mỗi model dùng ô khác nhau. */
 export type Role = 'skin' | 'hair' | 'shirt' | 'pants' | 'accent' | 'bracer' | 'trim' | 'shoes';
@@ -36,6 +36,12 @@ export type Pose = (typeof POSES)[number];
 
 /** Lễ tân (nhân vật chính) đứng sau quầy: áo sơ mi trắng, quần tối, khăn đỏ. Không nằm trong LOOKS để khách không trùng. */
 export const RECEPTIONIST: Look = { id: 'le-tan', model: 'Rogue', skin: '#f1c9a5', hair: '#2b1d16', shirt: '#f4f1ea', pants: '#2f3441', accent: '#c0392b', shoes: '#1d1f26' };
+
+/** Cảnh sát tuần tra ngoài phố: áo xanh navy, quần tối, mũ kê-pi. Không nằm trong LOOKS để khách không trùng. */
+export const POLICE: Look[] = [
+  { id: 'canh-sat-1', model: 'Rogue', skin: '#e0ac86', hair: '#1c1512', shirt: '#2a4a8a', pants: '#1f2a44', shoes: '#15171c', accessories: ['policecap'] },
+  { id: 'canh-sat-2', model: 'Ranger', skin: '#f1c9a5', hair: '#3b2a20', shirt: '#2a4a8a', pants: '#1f2a44', accent: '#1f2a44', shoes: '#15171c', accessories: ['policecap'] },
+];
 
 export const LOOKS: Look[] = [
   { id: 'du-khach-1', model: 'Ranger', skin: '#f1c9a5', hair: '#3b2a20', shirt: '#f2a03d', pants: '#d8c9a3', accent: '#e0443e', accessories: ['sunhat', 'camera'] },

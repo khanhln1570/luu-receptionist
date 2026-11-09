@@ -100,6 +100,17 @@ function accessory(kind: string, head: Vector3, h: number): Object3D {
     const band = new Mesh(new CylinderGeometry(h * 0.47, h * 0.47, h * 0.07, 24), mat('#d6453d'));
     band.position.set(0, h * 0.64, 0);
     g.add(brim, crown, band);
+  } else if (kind === 'policecap') {
+    const navy = mat('#1b2a52');
+    const crown = new Mesh(new CylinderGeometry(h * 0.46, h * 0.5, h * 0.3, 24), navy);
+    crown.position.set(0, h * 0.68, 0);
+    const band = new Mesh(new CylinderGeometry(h * 0.51, h * 0.51, h * 0.07, 24), mat('#0f1830'));
+    band.position.set(0, h * 0.56, 0);
+    const visor = new Mesh(new BoxGeometry(h * 0.7, h * 0.03, h * 0.28), mat('#0f1830'));
+    visor.position.set(0, h * 0.54, h * 0.55);
+    const badge = new Mesh(new BoxGeometry(h * 0.14, h * 0.14, h * 0.03), mat('#e0b040'));
+    badge.position.set(0, h * 0.66, h * 0.5);
+    g.add(crown, band, visor, badge);
   } else if (kind === 'shades') {
     const frame = new MeshStandardMaterial({ color: '#15171c', roughness: 0.4 });
     const glass = new MeshStandardMaterial({ color: '#1d2a44', roughness: 0.15, metalness: 0.6 });

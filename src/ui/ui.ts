@@ -61,6 +61,8 @@ export class UI {
   private talk = { id: '', step: 0 };
   private query = '';
   private toastTimer = 0;
+  private streetMenu = false; // menu ☰ ngoài phố đang mở
+  private warp = false; // ngoài phố đang tua ngày đêm
   private sig: Record<string, string> = {};
   private el: Record<string, HTMLElement> = {};
 
@@ -70,7 +72,7 @@ export class UI {
   ) {
     root.innerHTML = `
       <div class="hud"><div class="panel">
-        <span class="clock" title="Giờ trong game"><svg viewBox="0 0 40 40" width="34" height="34"><circle cx="20" cy="20" r="18.5" class="face"/><g class="ticks">${Array.from({ length: 12 }, (_, i) => `<line x1="20" y1="3.5" x2="20" y2="${i % 3 === 0 ? 7 : 5.5}" transform="rotate(${i * 30} 20 20)"/>`).join('')}</g><line data-k="hh" class="hand hh" x1="20" y1="20" x2="20" y2="10.5"/><line data-k="mh" class="hand mh" x1="20" y1="20" x2="20" y2="6"/><circle cx="20" cy="20" r="1.6" class="pin"/></svg><span class="cl-text"><b data-k="part"></b><span data-k="time"></span></span></span>
+        ${clockHtml()}</span>
         <span class="name"><span data-k="hotel"></span> · <span data-k="day"></span></span>
         <span class="stat">Hàng chờ: <b data-k="waiting"></b></span>
         <span class="stat">Đã nhận phòng: <b data-k="checked"></b></span>
@@ -175,9 +177,25 @@ export class UI {
           <div class="actions"><button class="primary" data-act="${last ? 'tut-ok' : 'tut-next'}">${last ? 'Bắt đầu thôi!' : 'Tiếp »'}</button>${last ? '' : '<button data-act="tut-ok">Bỏ qua</button>'}<span class="tut-dots">${story.map((_, i) => `<i class="${i === step ? 'on' : ''}"></i>`).join('')}</span></div></div></div>`
       : '';
     this.el.menu!.innerHTML = `<div class="street">
-      <div class="street-title panel"><div><h1>Luu Receptionist</h1><p>Phố khách sạn · chọn nơi làm việc hôm nay</p></div>
-        <div class="street-tools">${this.tutorial ? '' : '<button data-act="tut-open" title="Nghe Lưu hướng dẫn lại">? Hướng dẫn</button>'}<button data-act="reset">Xóa tiến trình</button></div></div>
+      <div class="street-title"><div><h1>Luu Receptionist</h1><p>Phố khách sạn · chọn nơi làm việc hôm nay</p></div>
+        <div class="street-tools"><span class="panel street-clock${this.warp ? ' warping' : ''}">${clockHtml()}${this.warp ? '<span class="warp-tag">»» Đang tua</span>' : ''}</span>${this.tutorial ? '' : '<button data-act="tut-open" title="Nghe Lưu hướng dẫn lại">? Hướng dẫn</button>'}
+          <div class="street-menu"><button class="hamburger" data-act="street-menu" aria-label="Menu" aria-expanded="${this.streetMenu}">☰</button>${
+            this.streetMenu
+              ? `<div class="menu-pop panel"><button data-act="warp">${this.warp ? '■ Dừng tua (về giờ thật)' : '»» Tua ngày đêm'}</button><button class="danger" data-act="reset">Xóa tiến trình</button></div>`
+              : ''
+          }</div></div></div>
       ${tut}<div class="street-labels">${labels}</div>${card}</div>`;
+  }
+
+  /** Ngoài phố đang tua nhanh ngày đêm (main đọc để đổi giờ của trời). */
+  get streetWarp(): boolean {
+    return this.warp;
+  }
+
+  /** Cập nhật đồng hồ ngoài phố mỗi khung hình theo giờ của trời (giờ thập phân 0–24). */
+  setStreetClock(hour: number): void {
+    const el = this.el.menu!.querySelector('.street-clock');
+    if (el) setClock(el, Math.floor(hour * 60) % (24 * 60));
   }
 
   /** Bấm vào một tòa trên phố (null = bấm ra chỗ trống). */
@@ -254,9 +272,25 @@ export class UI {
     if (!btn) return;
     if (btn.dataset.play) return this.actions.onPlay(btn.dataset.play);
     if (btn.dataset.act === 'menu') return this.actions.onMenu();
+    if (btn.dataset.act === 'street-menu') {
+      this.streetMenu = !this.streetMenu;
+      return this.renderStreet();
+    }
+    if (btn.dataset.act === 'warp') {
+      this.warp = !this.warp;
+      this.streetMenu = false;
+      return this.renderStreet();
+    }
     if (btn.dataset.act === 'reset') {
+      this.streetMenu = false;
+      if (this.root.classList.contains('in-menu')) this.renderStreet();
       if (window.confirm('Xóa toàn bộ tiến trình và mở khóa?')) this.actions.onReset();
       return;
+    }
+    if (this.streetMenu) {
+      // Bấm nút khác ngoài phố thì đóng menu
+      this.streetMenu = false;
+      this.renderStreet();
     }
     if (btn.dataset.pick) return this.selectHotel(btn.dataset.pick);
     if (btn.dataset.act === 'card-close') return this.selectHotel(null);
@@ -473,11 +507,9 @@ export class UI {
   render(): void {
     const g = this.game;
     if (!g) return;
-    const minute = g.clock.minute;
-    this.setText('time', formatMinute(minute));
-    this.setText('part', minute < 12 * 60 ? 'Sáng' : minute < 18 * 60 ? 'Chiều' : 'Tối');
-    this.el.hh!.setAttribute('transform', `rotate(${((minute / 60) % 12) * 30} 20 20)`);
-    this.el.mh!.setAttribute('transform', `rotate(${(minute % 60) * 6} 20 20)`);
+    // Đồng hồ hiện giờ local của máy cho khớp với trời ngoài phố; ca làm vẫn chạy theo g.clock
+    const now = new Date();
+    setClock(this.root.querySelector('.hud')!, now.getHours() * 60 + now.getMinutes());
     this.setText('hotel', g.config.name);
     this.setText('day', `Ngày ${this.day} · ${dateOf(this.day).weekday} ${dateOf(this.day).text}`);
     this.setText('target', vnd(g.revenueTarget));
@@ -590,4 +622,23 @@ export class UI {
       <p><button class="primary" data-act="restart">Chơi ngày tiếp theo</button> <button data-act="menu">Ra phố</button></p>
     </div></div>`;
   }
+}
+
+/** Đồng hồ kim + nhãn buổi/giờ, dùng chung cho thanh trạng thái trong sảnh và ngoài phố. */
+function clockHtml(): string {
+  const ticks = Array.from({ length: 12 }, (_, i) => `<line x1="20" y1="3.5" x2="20" y2="${i % 3 === 0 ? 7 : 5.5}" transform="rotate(${i * 30} 20 20)"/>`).join('');
+  return `<span class="clock" title="Giờ trên máy"><svg viewBox="0 0 40 40" width="34" height="34"><circle cx="20" cy="20" r="18.5" class="face"/><g class="ticks">${ticks}</g><line data-k="hh" class="hand hh" x1="20" y1="20" x2="20" y2="10.5"/><line data-k="mh" class="hand mh" x1="20" y1="20" x2="20" y2="6"/><circle cx="20" cy="20" r="1.6" class="pin"/></svg><span class="cl-text"><b data-k="part"></b><span data-k="time"></span></span></span>`;
+}
+
+/** Đặt kim, nhãn buổi và giờ cho một đồng hồ dựng bằng clockHtml(). */
+function setClock(root: ParentNode, minute: number): void {
+  const q = (k: string) => root.querySelector<SVGElement | HTMLElement>(`[data-k="${k}"]`);
+  const part = minute < 12 * 60 ? 'Sáng' : minute < 18 * 60 ? 'Chiều' : 'Tối';
+  const time = formatMinute(minute);
+  const p = q('part');
+  const t = q('time');
+  if (p && p.textContent !== part) p.textContent = part;
+  if (t && t.textContent !== time) t.textContent = time;
+  q('hh')?.setAttribute('transform', `rotate(${((minute / 60) % 12) * 30} 20 20)`);
+  q('mh')?.setAttribute('transform', `rotate(${(minute % 60) * 6} 20 20)`);
 }

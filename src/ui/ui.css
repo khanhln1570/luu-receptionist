@@ -22,16 +22,16 @@ button.active { outline: 2px solid var(--accent); }
 .hud .panel { display: flex; gap: 14px; align-items: center; white-space: nowrap; }
 .hud .speed { flex: none; }
 .hud .speed button { white-space: nowrap; }
-.hud .clock { display: flex; align-items: center; gap: 8px; }
-.hud .clock .face { fill: #f6ecd8; stroke: #8a6a4a; stroke-width: 2; }
-.hud .clock .ticks line { stroke: #6b4f33; stroke-width: 1.2; }
-.hud .clock .hand { stroke: #2b2f40; stroke-linecap: round; }
-.hud .clock .hh { stroke-width: 2.6; }
-.hud .clock .mh { stroke-width: 1.6; }
-.hud .clock .pin { fill: #c0392b; }
-.hud .cl-text { display: flex; flex-direction: column; line-height: 1.1; font-variant-numeric: tabular-nums; }
-.hud .cl-text b { font-size: 16px; }
-.hud .cl-text span { font-size: 13px; opacity: 0.75; }
+.clock { display: flex; align-items: center; gap: 8px; }
+.clock .face { fill: #f6ecd8; stroke: #8a6a4a; stroke-width: 2; }
+.clock .ticks line { stroke: #6b4f33; stroke-width: 1.2; }
+.clock .hand { stroke: #2b2f40; stroke-linecap: round; }
+.clock .hh { stroke-width: 2.6; }
+.clock .mh { stroke-width: 1.6; }
+.clock .pin { fill: #c0392b; }
+.cl-text { display: flex; flex-direction: column; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.cl-text b { font-size: 16px; }
+.cl-text span { font-size: 13px; opacity: 0.75; }
 .hud .stat b { color: var(--accent); }
 .hud .name { font-weight: 600; }
 .speed { display: flex; gap: 6px; margin-left: auto; }
@@ -151,9 +151,18 @@ button.collapse { padding: 0 8px; line-height: 18px; font-size: 16px; border-rad
 
 .street { position: absolute; inset: 0; pointer-events: none; }
 .street-title { position: absolute; top: 12px; left: 12px; right: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.street-title h1 { margin: 0; font-size: 20px; }
-.street-title p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
-.street-tools { display: flex; gap: 6px; }
+.street-title h1, .street-title p { color: #fff; font-family: ui-rounded, 'Arial Rounded MT Bold', 'Segoe UI', system-ui, sans-serif; font-weight: 800; letter-spacing: 0.02em; -webkit-text-stroke: 4px #2f6f9f; paint-order: stroke fill; text-shadow: 0 2px 0 #2f6f9f, 0 3px 6px rgba(30, 70, 110, 0.35); }
+.street-title h1 { margin: 0; font-size: 28px; }
+.street-title p { margin: 2px 0 0; font-size: 15px; -webkit-text-stroke-width: 3px; }
+.street-tools { display: flex; gap: 6px; align-items: center; }
+.street-clock { display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 6px; }
+.street-clock.warping { border-color: var(--accent); }
+.warp-tag { font-size: 12px; color: var(--accent); font-weight: 600; white-space: nowrap; }
+.street-menu { position: relative; }
+.hamburger { width: 38px; height: 38px; padding: 0; font-size: 18px; line-height: 1; }
+.menu-pop { position: absolute; top: calc(100% + 6px); right: 0; display: flex; flex-direction: column; gap: 6px; min-width: 200px; z-index: 6; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35); }
+.menu-pop button { text-align: left; white-space: nowrap; }
+.menu-pop button.danger { color: #ffb3a8; }
 .tutorial { position: absolute; bottom: 16px; left: 12px; width: min(460px, calc(100% - 24px)); display: flex; gap: 12px; align-items: flex-start; }
 .tutorial .portrait { width: 88px; height: 88px; flex: none; }
 .tutorial .tut-body { display: flex; flex-direction: column; gap: 6px; }
@@ -178,4 +187,4 @@ button.collapse { padding: 0 8px; line-height: 18px; font-size: 16px; border-rad
 .street-card button.primary { align-self: flex-start; margin-top: 4px; }
 .street-card .b-x { position: absolute; top: 8px; right: 8px; width: 22px; height: 22px; padding: 0; border-radius: 6px; background: transparent; border-color: transparent; color: var(--muted); }
 .street-card .b-x:hover { background: #4a5070; color: var(--text); }
-.street-hint { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); color: var(--muted); }
+.street-hint { position: absolute; left: 50%; top: 68px; transform: translateX(-50%); color: var(--muted); }

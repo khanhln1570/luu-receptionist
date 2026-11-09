@@ -231,7 +231,9 @@ renderer.setAnimationLoop((now) => {
     // Màn phố
     if (street) {
       street.point(ui.streetFocus);
+      street.setWarp(ui.streetWarp);
       street.update(dt);
+      ui.setStreetClock(street.hour);
       ui.placeStreetLabels(street.labels(canvas.clientWidth, canvas.clientHeight));
       renderer.render(street.scene, street.camera);
     }
