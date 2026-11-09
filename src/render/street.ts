@@ -1,4 +1,5 @@
 import {
+  AnimationMixer,
   Box3,
   CanvasTexture,
   Color,
@@ -21,6 +22,8 @@ import {
 import type { LobbyTheme } from './lobbyLayout';
 import { KIT, mat, rbox, tree } from './kit';
 import { loadModel } from './loader';
+import { createCharacter, loadClips } from './characters';
+import { LOOKS } from '../data/looks';
 
 /** Mẫu nhà City Builder cho từng kiểu khách sạn. */
 const BUILDING: Record<LobbyTheme, string> = { homestay: 'building_A', hotel: 'building_D', resort: 'building_E' };
@@ -32,11 +35,18 @@ const ROW_Z = -1.2; // dãy nhà
 const ROAD_Z = 0.8;
 const FRONT_Z = 2.8; // vỉa hè phía trước
 const ROAD_TOP = 0.1; // mặt trên của ô đường trong City Builder
+const PERSON_HEIGHT = 0.46; // xe sedan sau khi phóng dài ~1.2 (≈4.5 m) nên 1 đơn vị ≈ 3.7 m, người 1.7 m ≈ 0.46
 
 export interface StreetHotel {
   id: string;
   name: string;
   theme: LobbyTheme;
+}
+
+interface Walker {
+  obj: Object3D;
+  mixer: AnimationMixer;
+  speed: number;
 }
 
 interface Car {
@@ -54,6 +64,7 @@ export class Street {
   private buildings = new Map<string, Group>(); // id khách sạn -> tòa nhà
   private anchors = new Map<string, Vector3>(); // điểm đặt nhãn trên nóc
   private cars: Car[] = [];
+  private walkers: Walker[] = [];
   private marker = new Group();
   private markerFor: string | null = null;
   private time = 0;
@@ -160,6 +171,7 @@ export class Street {
     jobs.push(car('car_sedan', -10, ROAD_Z - 0.45, Math.PI / 2, 2.2));
     jobs.push(car('car_stationwagon', 8, ROAD_Z + 0.45, -Math.PI / 2, -1.8));
     await Promise.all(jobs);
+    await this.addWalkers();
 
     // Mũi tên chỉ tòa đang chọn
     const cone = new Mesh(new ConeGeometry(0.28, 0.5, 4), mat(KIT.gold, { glow: 0xffb000, glowIntensity: 0.5 }));
@@ -170,6 +182,43 @@ export class Street {
     this.marker.add(cone, ring);
     this.marker.visible = false;
     this.scene.add(this.marker);
+  }
+
+  /** Người đi bộ trên vỉa hè trước dãy nhà, hai chiều, tỉ lệ theo xe. */
+  private async addWalkers(): Promise<void> {
+    const clips = await loadClips();
+    // [x xuất phát, z, vận tốc (âm = đi ngược), mẫu ngoại hình]
+    const plan: Array<[number, number, number, number]> = [
+      [-11, FRONT_Z - 0.1, 0.45, 0],
+      [-4, FRONT_Z + 0.25, -0.38, 1],
+      [-0.5, FRONT_Z - 0.2, 0.5, 2],
+      [5, FRONT_Z + 0.2, -0.42, 3],
+      [10, FRONT_Z - 0.1, 0.36, 4],
+      [13, FRONT_Z + 0.25, -0.48, 5],
+    ];
+    await Promise.all(
+      plan.map(async ([x, z, speed, look]) => {
+        const char = await createCharacter(LOOKS[look % LOOKS.length]!);
+        const box = new Box3();
+        char.root.traverse((o) => {
+          const m = o as Mesh;
+          if (m.isMesh && m.visible && m.geometry) {
+            m.geometry.computeBoundingBox();
+            box.union(m.geometry.boundingBox!.clone().applyMatrix4(m.matrixWorld));
+          }
+        });
+        char.root.scale.setScalar(PERSON_HEIGHT / Math.max(0.1, box.max.y - box.min.y));
+        char.root.position.set(x, ROAD_TOP, z);
+        char.root.rotation.y = speed > 0 ? Math.PI / 2 : -Math.PI / 2;
+        char.mixer.stopAllAction();
+        const walk = char.mixer.clipAction(clips.get('Walking_A')!);
+        walk.timeScale = Math.abs(speed) / 0.45; // chân bước khớp với tốc độ
+        walk.play();
+        char.mixer.setTime(x * 0.13 % 1);
+        this.scene.add(char.root);
+        this.walkers.push({ obj: char.root, mixer: char.mixer, speed });
+      }),
+    );
   }
 
   /** Tòa khách sạn dưới con trỏ (x, y là pixel trong canvas cỡ w × h). */
@@ -201,6 +250,12 @@ export class Street {
       c.obj.position.x += c.speed * dt;
       if (c.obj.position.x > 15) c.obj.position.x = -15;
       if (c.obj.position.x < -15) c.obj.position.x = 15;
+    }
+    for (const w of this.walkers) {
+      w.mixer.update(dt);
+      w.obj.position.x += w.speed * dt;
+      if (w.obj.position.x > 15) w.obj.position.x = -15;
+      if (w.obj.position.x < -15) w.obj.position.x = 15;
     }
     const a = this.markerFor ? this.anchors.get(this.markerFor) : undefined;
     this.marker.visible = !!a;
