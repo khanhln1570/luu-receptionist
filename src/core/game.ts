@@ -10,6 +10,8 @@ import {
   type DayParams,
 } from './guests';
 import { GuestQueue, type WaitingGuest } from './queue';
+import { isPaid, serviceFor, servicePrice, type PaidKind } from './pricing';
+import { REGULAR, type RegularOutcome, type RegularVisit } from './regulars';
 import { checkIn, checkOut, type ExtraCharge, type Reservation } from './reservations';
 import { fail, ok, type Result } from './result';
 import { Rng } from './rng';
@@ -25,6 +27,7 @@ import {
   type ScenarioType,
 } from './scenarios';
 import { TaskBoard, type Task, type TaskConfig, type TaskKind } from './tasks';
+import { VISITOR, generateVisitors, visitorReply, type Visitor, type VisitorOutcome } from './visitors';
 
 export interface HotelConfig {
   name: string;
@@ -50,6 +53,13 @@ export interface GameEvent {
   text: string;
 }
 
+/** Thứ ngoài lịch khách thường mà Game nhận vào: hiện chỉ có khách quen của ngày. */
+export interface GameExtras {
+  regularVisits?: readonly RegularVisit[];
+  ownerVisit?: Scenario; // chủ khách sạn ghé quầy hôm nay
+  extraScenarios?: readonly Scenario[]; // tình huống ngoài kho thường, để thử bằng triggerScenario
+}
+
 export type ChoiceResult = { ok: true; message: string; satisfaction: number } | { ok: false; error: string };
 
 const EXTRA_CHARGES: readonly ExtraCharge[] = [
@@ -68,13 +78,19 @@ export class Game {
   readonly reservations: Reservation[];
   readonly queue: GuestQueue;
   readonly tasks: TaskBoard;
-  readonly stats = { checkedIn: 0, checkedOut: 0, left: 0, turnedAway: 0, revenue: 0, waived: 0, scenarios: 0, mistakes: 0 };
+  readonly stats = { checkedIn: 0, checkedOut: 0, left: 0, turnedAway: 0, revenue: 0, waived: 0, scenarios: 0, mistakes: 0, serviceCost: 0 };
   /** Doanh thu mục tiêu của ngày: tỉ lệ của tổng hóa đơn các khách sẽ trả phòng hôm nay (0 nếu không có ai). */
   readonly revenueTarget: number;
   readonly events: GameEvent[] = []; // sự kiện đáng nhớ trong ngày, hiện ở màn tổng kết
   private scores: number[] = []; // điểm hài lòng của từng khách đã xong việc
   private mistakes = 0; // số lần chọn sai với khách đang ở quầy
   billing: Bill | null = null; // hóa đơn đang lập cho khách trả phòng ở quầy
+  readonly visitors: Visitor[]; // người lạ trong sảnh có vai ẩn
+  private visitorFate = new Map<string, 'shooed' | 'treated'>();
+  /** Biến cố trong ngày ảnh hưởng danh tiếng (review của nhà phê bình, khách quen...), cộng vào thay đổi theo sao. */
+  reputationBonus = 0;
+  readonly regularOutcomes: RegularOutcome[] = []; // kết quả các lần ghé của khách quen hôm nay
+  private regularVisits = new Map<string, RegularVisit>();
   private walkInCount = 0;
   private readonly scenarioById: Map<string, Scenario>;
 
@@ -82,6 +98,7 @@ export class Game {
     readonly config: HotelConfig,
     readonly seed: number,
     scenarios: readonly Scenario[] = [],
+    extras: GameExtras = {},
   ) {
     this.scenarioById = new Map(scenarios.map((s) => [s.id, s]));
     const pool = (type: ScenarioType) => scenarios.filter((s) => s.type === type);
@@ -167,6 +184,40 @@ export class Game {
           });
         }
       });
+
+    // Khách quen và người lạ dùng bộ ngẫu nhiên riêng để không đổi lịch khách thường của cùng seed.
+    const extraRng = new Rng((seed ^ 0x51ed270b) >>> 0);
+    (extras.regularVisits ?? []).forEach((v, i) => {
+      const id = `rg${i + 1}`;
+      this.scenarioById.set(v.scenario.id, v.scenario);
+      this.regularVisits.set(id, v);
+      arrivals.push({
+        id,
+        arrivalMinute: extraRng.int(params.openMinute + 30, Math.max(params.openMinute + 31, params.closeMinute - 150)),
+        kind: 'special',
+        guestName: v.regular.name,
+        personality: v.regular.personality,
+        patienceMinutes: Math.round(params.patienceMinutes * PATIENCE_FACTOR[v.regular.personality]),
+        roomType: v.regular.roomType,
+        scenarioId: v.scenario.id,
+        regularId: v.regular.id,
+      });
+    });
+    for (const sc of extras.extraScenarios ?? []) this.scenarioById.set(sc.id, sc);
+    if (extras.ownerVisit) {
+      this.scenarioById.set(extras.ownerVisit.id, extras.ownerVisit);
+      arrivals.push({
+        id: 'owner',
+        arrivalMinute: extraRng.int(params.openMinute + 120, Math.max(params.openMinute + 121, params.closeMinute - 180)),
+        kind: 'special',
+        guestName: extras.ownerVisit.guest ?? 'Chủ khách sạn',
+        personality: 'kien_nhan',
+        patienceMinutes: Math.round(params.patienceMinutes * PATIENCE_FACTOR.kien_nhan),
+        roomType: this.rooms[0]?.type ?? 'don',
+        scenarioId: extras.ownerVisit.id,
+      });
+    }
+    this.visitors = generateVisitors(new Rng((seed ^ 0x7f4a7c15) >>> 0), params.openMinute, params.closeMinute);
 
     this.futureBookings = this.makeFutureBookings(seed);
     this.revenueTarget = Math.round(REVENUE_TARGET_RATE * expectedCheckoutRevenue);
@@ -264,7 +315,28 @@ export class Game {
 
   /** Giao việc dọn phòng, sửa chữa, hoặc việc tại phòng có khách. */
   assignTask(roomId: string, kind: TaskKind): Result {
-    return this.tasks.assign(roomId, kind);
+    const r = this.tasks.assign(roomId, kind);
+    const room = this.rooms.find((x) => x.id === roomId);
+    if (r.ok && room && isPaid(kind)) {
+      const price = servicePrice(room, kind);
+      this.stats.revenue -= price;
+      this.stats.serviceCost += price;
+    }
+    return r;
+  }
+
+  /** Phòng đang cần dọn hoặc sửa mà chưa giao việc, kèm giá dịch vụ (để báo trên chuông thông báo). */
+  needsService(): Array<{ roomId: string; type: RoomType; kind: PaidKind; price: number }> {
+    return this.rooms.flatMap((r) => {
+      const kind = serviceFor(r.status);
+      return kind && !this.tasks.taskFor(r.id) ? [{ roomId: r.id, type: r.type, kind, price: servicePrice(r, kind) }] : [];
+    });
+  }
+
+  /** Báo giá giao việc cho một phòng: null nếu phòng không cần dọn/sửa hoặc đã giao rồi. */
+  quoteService(roomId: string): { roomId: string; type: RoomType; kind: PaidKind; price: number; minutes: number } | null {
+    const n = this.needsService().find((x) => x.roomId === roomId);
+    return n ? { ...n, minutes: this.config.taskMinutes[n.kind] } : null;
   }
 
   callNext(): WaitingGuest | null {
@@ -402,6 +474,11 @@ export class Game {
 
   // ---- Tình huống (sự cố, overbooking, đặc biệt) ----
 
+  /** Kịch bản của một lượt khách (cho lễ tân tự động cân nhắc lựa chọn). */
+  scenarioFor(arrival: Arrival): Scenario | undefined {
+    return this.scenarioOf(arrival);
+  }
+
   private scenarioOf(arrival: Arrival): Scenario | undefined {
     return arrival.scenarioId ? this.scenarioById.get(arrival.scenarioId) : undefined;
   }
@@ -462,6 +539,8 @@ export class Game {
       this.events.push({ kind: delta >= 0 ? 'good' : 'bad', text: `${a.guestName}: ${message}` });
     }
     this.finishGuest(SCORE.scenarioBase + delta * SCORE.scenarioPerPoint);
+    if (a.regularId) this.recordRegular(a, delta);
+    if (a.id === 'owner' || sc.guest) this.reputationBonus += delta >= 5 ? 3 : delta <= -5 ? -3 : 0; // chủ khách sạn nhận xét: ảnh hưởng danh tiếng
     return { ok: true, message, satisfaction: delta };
   }
 
@@ -484,5 +563,135 @@ export class Game {
     }
     if (e.task && res?.roomId) this.tasks.assign(res.roomId, e.task);
     if (e.money) this.stats.revenue += e.money;
+  }
+
+  // ---- Thử tình huống ----
+
+  private triggered = 0;
+
+  /**
+   * Cho một tình huống xảy ra ngay: tạo khách mang tình huống đó vào hàng chờ (và gọi ra quầy nếu quầy đang trống).
+   * Sự cố cần một khách đang ở khách sạn; đặt trùng phòng thì tạo thêm một đặt phòng hôm nay cho khách.
+   */
+  triggerScenario(id: string): Result {
+    const sc = this.scenarioById.get(id);
+    if (!sc) return fail('Không có tình huống này');
+    if (this.isOver) return fail('Đã hết ngày');
+    const n = ++this.triggered;
+    const rng = new Rng((this.seed + n * 7919) >>> 0);
+    const inQueue = new Set([...this.queue.waiting, ...(this.queue.current ? [this.queue.current] : [])].map((w) => w.arrival.reservationCode));
+    const base: Arrival = {
+      id: `t${n}`,
+      arrivalMinute: this.clock.minute,
+      kind: sc.type,
+      guestName: sc.guest ?? randomName(rng),
+      personality: 'de_tinh',
+      patienceMinutes: Math.round(this.config.params.patienceMinutes * PATIENCE_FACTOR.de_tinh),
+      roomType: this.rooms[0]?.type ?? 'don',
+      scenarioId: sc.id,
+    };
+    if (sc.type === 'incident') {
+      const stay = this.reservations.find((r) => r.status === 'checked_in' && r.roomId && !inQueue.has(r.code));
+      if (!stay) return fail('Chưa có khách nào đang ở khách sạn để báo sự cố');
+      Object.assign(base, { guestName: stay.guestName, roomType: stay.roomType, reservationCode: stay.code, roomId: stay.roomId });
+    } else if (sc.type === 'overbooking') {
+      const res: Reservation = {
+        id: `t${n}`,
+        code: `TT-${n}`,
+        guestName: base.guestName,
+        roomType: base.roomType,
+        nights: 1,
+        arrivalDay: 0,
+        departDay: 1,
+        status: 'booked',
+        charges: [],
+      };
+      this.reservations.push(res);
+      base.reservationCode = res.code;
+    }
+    this.queue.enqueue(base);
+    this.callNext(); // quầy đang trống thì khách vào quầy luôn
+    return ok;
+  }
+
+  // ---- Khách quen ----
+
+  /** Ghi kết quả một lần ghé của khách quen; lần cuối mà họ đủ hài lòng thì thành bạn của khách sạn. */
+  private recordRegular(a: Arrival, satisfaction: number): void {
+    const v = this.regularVisits.get(a.id);
+    if (!v) return;
+    const becameFriend = v.finale && v.mood + satisfaction >= REGULAR.friendMood;
+    this.regularOutcomes.push({ id: v.regular.id, satisfaction, finale: v.finale, becameFriend });
+    if (becameFriend) {
+      this.stats.revenue += REGULAR.friendBonus;
+      this.reputationBonus += 5;
+      this.events.push({ kind: 'good', text: `${v.regular.name} đã thành bạn của khách sạn. ${v.regular.farewell}` });
+    } else if (satisfaction >= 5) this.reputationBonus += 2;
+    else if (satisfaction <= -8) {
+      this.reputationBonus -= 3;
+      this.events.push({ kind: 'bad', text: `${v.regular.name} ra về buồn bã, khó mà quay lại.` });
+    }
+  }
+
+  // ---- Người lạ trong sảnh ----
+
+  /** Người lạ đang có mặt ở sảnh: đã tới giờ, chưa hết giờ ở và chưa bị xử lý. */
+  activeVisitors(): Visitor[] {
+    const now = this.clock.minute;
+    return this.visitors.filter((v) => !this.visitorFate.has(v.id) && now >= v.arrivalMinute && now < v.arrivalMinute + v.stayMinutes && !this.isOver);
+  }
+
+  /** Hỏi thăm một người lạ: thường là manh mối về vai của họ. null nếu người đó không còn ở sảnh. */
+  askVisitor(id: string, rand: () => number = Math.random): string | null {
+    const v = this.activeVisitors().find((x) => x.id === id);
+    return v ? visitorReply(v, rand) : null;
+  }
+
+  /** Mời người lạ ra về. Đuổi nhầm nhà phê bình thì bị chấm một sao. */
+  shooVisitor(id: string): VisitorOutcome {
+    const v = this.activeVisitors().find((x) => x.id === id);
+    if (!v) return { ok: false, error: 'Người này đã đi khỏi' };
+    this.visitorFate.set(id, 'shooed');
+    if (v.role === 'critic') {
+      this.scores.push(VISITOR.criticShooed);
+      this.reputationBonus -= 10;
+      this.events.push({ kind: 'bad', text: `${v.name} hóa ra là nhà phê bình, vừa bị bạn đuổi. Review một sao đang được viết.` });
+      return { ok: true, good: false, message: 'Tôi là nhà phê bình đó! Review một sao nhé.' };
+    }
+    if (v.role === 'spy') {
+      this.scores.push(VISITOR.spyShooed);
+      this.reputationBonus += 2;
+      this.events.push({ kind: 'good', text: `Bạn phát hiện ${v.name} là gián điệp của đối thủ và mời ra khỏi sảnh.` });
+      return { ok: true, good: true, message: 'Bị phát hiện rồi… tôi đi đây!' };
+    }
+    this.reputationBonus += 1;
+    return { ok: true, good: true, message: 'Được rồi, tôi đi. Máy lạnh chỗ khác cũng mát.' };
+  }
+
+  /** Mời nước một người lạ: tốn tiền, nhưng nhà phê bình sẽ khen. */
+  treatVisitor(id: string): VisitorOutcome {
+    const v = this.activeVisitors().find((x) => x.id === id);
+    if (!v) return { ok: false, error: 'Người này đã đi khỏi' };
+    this.visitorFate.set(id, 'treated');
+    this.stats.revenue -= VISITOR.drinkCost;
+    if (v.role === 'critic') {
+      this.scores.push(VISITOR.criticPraised);
+      this.stats.revenue += VISITOR.criticTip;
+      this.reputationBonus += 8;
+      this.events.push({ kind: 'good', text: `${v.name} là nhà phê bình, rất hài lòng vì được phục vụ chu đáo. Bài review tốt kéo thêm khách.` });
+      return { ok: true, good: true, message: 'Phục vụ chu đáo đó. Tôi sẽ viết review tốt.' };
+    }
+    if (v.role === 'spy') {
+      this.reputationBonus -= 3;
+      this.events.push({ kind: 'bad', text: `${v.name} hóa ra là gián điệp, vừa được bạn mời nước và ghi lại hết bí quyết của khách sạn.` });
+      return { ok: true, good: false, message: 'Cảm ơn nha. Nước ngon, bí quyết cũng ngon luôn.' };
+    }
+    return { ok: true, good: false, message: 'Ly nước ngon quá, cho thêm ly nữa nha!' };
+  }
+
+  /** Mời nước một khách đang ở khách sạn ngồi chơi ở sảnh: chỉ tốn tiền. */
+  treatGuest(): VisitorOutcome {
+    this.stats.revenue -= VISITOR.drinkCost;
+    return { ok: true, good: true, message: 'Cảm ơn bạn nhiều, tôi ngồi thế này là đủ rồi.' };
   }
 }

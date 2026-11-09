@@ -16,6 +16,7 @@ export interface Arrival {
   reservationCode?: string; // có với kind = 'checkin' và 'checkout'
   roomId?: string; // phòng khách đang ở (checkout, incident)
   scenarioId?: string; // tình huống cần xử lý (incident, overbooking, special)
+  regularId?: string; // khách quen (kind = 'special')
 }
 
 export interface DayParams {

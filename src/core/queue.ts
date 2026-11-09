@@ -40,6 +40,13 @@ export class GuestQueue {
     return left;
   }
 
+  /** Cho một khách vào hàng chờ ngay (dùng khi người chơi chủ động thử một tình huống). */
+  enqueue(arrival: Arrival): WaitingGuest {
+    const g: WaitingGuest = { arrival, patienceLeft: arrival.patienceMinutes };
+    this.waiting.push(g);
+    return g;
+  }
+
   /** Gọi khách đầu hàng vào phục vụ. Trả null nếu đang bận hoặc hàng trống. */
   callNext(): WaitingGuest | null {
     if (this.current || this.waiting.length === 0) return null;

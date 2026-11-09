@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Game, type HotelConfig } from '../src/core/game';
-import { SHOO_REPLIES, SMALL_TALK, shooReply, shuffleBag } from '../src/core/smalltalk';
+import { SHOO_REPLIES, SMALL_TALK, shuffleBag } from '../src/core/smalltalk';
 import { SCORE } from '../src/core/scoring';
 import { SAMPLE_HOTEL } from './fixtures/sampleHotel';
 
@@ -20,10 +20,11 @@ describe('hỏi thăm khách trong sảnh', () => {
     lines.slice(1).forEach((l, k) => expect(l).not.toBe(lines[k]));
   });
 
-  it('câu khi bị đuổi: ra đủ mọi câu và không vượt khỏi danh sách', () => {
-    const seen = new Set(Array.from({ length: SHOO_REPLIES.length }, (_, i) => shooReply(() => i / SHOO_REPLIES.length)));
-    expect(seen.size).toBe(SHOO_REPLIES.length);
-    expect(shooReply(() => 0.999999)).toBe(SHOO_REPLIES[SHOO_REPLIES.length - 1]);
+  it('câu khi bị đuổi: một vòng ra đủ mọi câu, không lặp', () => {
+    const next = shuffleBag(SHOO_REPLIES, Math.random);
+    const lines = Array.from({ length: SHOO_REPLIES.length }, next);
+    expect(new Set(lines).size).toBe(SHOO_REPLIES.length); // một vòng ra đủ mọi câu, không câu nào lặp
+    expect(SHOO_REPLIES.length).toBeGreaterThanOrEqual(25);
   });
 });
 

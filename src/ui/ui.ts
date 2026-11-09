@@ -6,7 +6,10 @@ import type { Game } from '../core/game';
 import { ROOM_STATUS_LABEL, ROOM_TYPE_LABEL } from '../core/labels';
 import { findReservations, type Reservation } from '../core/reservations';
 import type { Result } from '../core/result';
-import { SMALL_TALK, shooReply, shuffleBag } from '../core/smalltalk';
+import { PAID_LABEL } from '../core/pricing';
+import { reputationLabel } from '../core/reputation';
+import { SHOO_REPLIES, shuffleBag, talkPool } from '../core/smalltalk';
+import type { StoryBeat } from '../core/story';
 import './ui.css';
 
 const esc = (s: string): string =>
@@ -14,6 +17,13 @@ const esc = (s: string): string =>
 
 const money = (n: number): string => `${(n / 1000).toLocaleString('vi-VN')}k`;
 const vnd = (n: number): string => `${n.toLocaleString('vi-VN')}đ`;
+
+/** Giờ thật hiện tại, ví dụ "Thứ Hai, 09/11 · 14:05". */
+function streetClockText(now = new Date()): string {
+  const day = now.toLocaleDateString('vi-VN', { weekday: 'long', day: '2-digit', month: '2-digit' });
+  const time = now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return `${day.charAt(0).toUpperCase()}${day.slice(1)} · ${time}`;
+}
 
 export interface MenuCard {
   id: string;
@@ -26,14 +36,39 @@ export interface MenuCard {
   bestStars: number;
   state: 'locked' | 'open' | 'done';
   lockReason?: string;
+  note?: string; // ví dụ: ca đang làm dở
+  reputation: string; // "Được yêu thích (64)"
+}
+
+/** Kết quả một hành động với người trong sảnh; message (nếu có) hiện trong bong bóng thoại. */
+export type BubbleResult = { ok: true; message?: string; good?: boolean } | { ok: false; error: string };
+
+export interface ShopView {
+  hotel: string;
+  money: number;
+  items: Array<{ id: string; name: string; description: string; price: number; owned: boolean }>;
+}
+
+/** Thông tin về khách sạn đang chơi, do main.ts truyền vào khi bắt đầu ngày. */
+export interface DayInfo {
+  hotelId: string;
+  reputation: number;
+  upgrades: readonly string[];
 }
 
 export interface UIActions {
   onRestart: () => void; // chơi ngày tiếp theo ở cùng khách sạn
-  onMenu: () => void;
+  onMenu: () => void; // ra phố, giữ nguyên ca đang làm
+  onQuit: () => void; // nghỉ việc: bỏ ca, không tính kết quả
   onPlay: (hotelId: string) => void;
   onReset: () => void;
-  onShoo: (id: string) => Result; // đuổi một người trong sảnh (id nhân vật 3D)
+  onShoo: (id: string) => BubbleResult; // đuổi một người trong sảnh (id nhân vật 3D)
+  onAsk: (id: string) => string | null; // câu trả lời riêng của người đó (null = dùng câu chung)
+  onTreat: (id: string) => BubbleResult; // mời nước một người ngồi chơi ở sảnh
+  scenarioList: () => Array<{ id: string; group: string; preview: string }>; // kho tình huống để thử
+  onTrigger: (id: string) => Result; // cho tình huống đó xảy ra ngay
+  shopView: (hotelId: string) => ShopView;
+  onBuy: (hotelId: string, upgradeId: string) => Result;
 }
 
 export class UI {
@@ -43,19 +78,32 @@ export class UI {
   private calOpen = false;
   /** Màn phố: thẻ khách sạn, tòa đang chọn / đang rê chuột, hướng dẫn. */
   private cards: MenuCard[] = [];
+  private wallet = 0;
   private selectedHotel: string | null = null;
   private hoveredHotel: string | null = null;
   private tutorial = true;
   private tutorialStep = 0;
-  private nextTalk = shuffleBag(SMALL_TALK, Math.random);
+  private nextTalk = shuffleBag(talkPool([]), Math.random);
+  private nextShoo = shuffleBag(SHOO_REPLIES, Math.random);
   /** Bong bóng thoại trên đầu một người trong sảnh: chưa có text thì hiện hai lựa chọn. */
   private bubble: { id: string; text: string | null; until: number } | null = null;
   private hidden = { left: false, right: false }; // thu sổ đặt phòng / bảng phòng
+  auto = false; // lễ tân tự động làm việc (main.ts xử lý)
+  private menuOpen = false;
+  private pickerOpen = false;
+  private bellOpen = false;
+  private knownNeeds: Set<string> | null = null; // phòng đã báo trên chuông, để chỉ báo phòng mới
+  private bellTimer = 0;
+  private quote: string | null = null; // phòng đang được báo giá dịch vụ
   skipping = false; // đang tua nhanh tới khách kế tiếp (main.ts xử lý)
 
   private game: Game | null = null;
   private day = 1;
   private outcome: string[] = [];
+  private story: StoryBeat | null = null;
+  private info: DayInfo | null = null;
+  private shopHotel: string | null = null; // đang mở cửa hàng nâng cấp của khách sạn nào
+  private summaryHidden = false; // người chơi đã tắt bảng tổng kết để ngắm sảnh
   private selectedRes: string | null = null;
   /** Bước hỏi chuyện với khách ở quầy: 0 chưa hỏi gì, 1 đã hỏi đã đặt trước chưa, 2 đã biết thông tin khách. */
   private talk = { id: '', step: 0 };
@@ -77,10 +125,22 @@ export class UI {
         <span class="stat">Đã trả phòng: <b data-k="out"></b></span>
         <span class="stat">Doanh thu: <b data-k="revenue"></b> / <span data-k="target"></span></span>
         <span class="stat">Hài lòng: <b data-k="sat"></b></span>
+        <span class="stat" title="Danh tiếng cao thì đông khách và khách kiên nhẫn hơn">Danh tiếng: <b data-k="rep"></b></span>
         <span class="stat">Khách bỏ đi: <b data-k="left"></b></span>
       </div>
-      <div class="speed panel">
-        <button data-speed="0">Dừng</button><button data-speed="1">1x</button><button data-speed="3">3x</button><button data-speed="10">10x</button><button data-act="calendar" title="Lịch đặt phòng 7 ngày tới">Lịch</button><button data-act="skip" title="Tua nhanh tới khi có khách kế tiếp hoặc hết ngày">Khách kế »</button><button data-act="street" title="Ra ngoài phố chọn khách sạn khác">Ra phố</button>
+      <div class="speed panel" data-k="speedbox">
+        <button class="bell" data-act="bell-toggle" title="Phòng cần dọn hoặc sửa" aria-label="Thông báo phòng cần dọn hoặc sửa"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 17V11a6 6 0 0 1 12 0v6l2 2H4z"/><path d="M10 21a2 2 0 0 0 4 0"/></svg><b class="badge" data-k="badge"></b></button>
+        <div class="bell-pop" data-k="bell"></div>
+        <button data-act="menu-toggle" title="Tạm dừng, tua nhanh, tự động làm việc, ra phố, nghỉ việc">☰ Menu</button>
+        <div class="menu-pop">
+          <div class="menu-row"><button data-speed="0">Dừng</button><button data-speed="1">1x</button><button data-speed="3">3x</button><button data-speed="10">10x</button></div>
+          <button data-act="skip" title="Tua nhanh tới khi có khách kế tiếp hoặc hết ngày">Tua nhanh tới khách kế »</button>
+          <button data-act="pick-open" title="Chọn một tình huống để nó xảy ra ngay">Chọn tình huống…</button>
+          <button data-act="calendar" title="Lịch đặt phòng 7 ngày tới">Lịch đặt phòng</button>
+          <button data-act="auto" title="Lễ tân tự nhận phòng, trả phòng, xử lý khách và giao việc dọn phòng">Tự động làm việc: Tắt</button>
+          <button data-act="street" title="Ra phố nhưng giữ nguyên ca đang làm; vào lại cùng khách sạn để làm tiếp">Ra phố (giữ ca)</button>
+          <button class="quit" data-act="quit" title="Bỏ ca đang làm, không tính kết quả">Nghỉ việc</button>
+        </div>
       </div></div>
       <div class="queue" data-k="queue"></div>
       <div class="left panel"><h2><span>Sổ đặt phòng</span><button class="collapse" data-act="toggle-left" title="Thu nhỏ sổ đặt phòng">–</button></h2>
@@ -99,6 +159,9 @@ export class UI {
       <div class="toast" data-k="toast"></div>
       <div data-k="cal"></div>
       <div data-k="overlay"></div>
+      <div data-k="shop"></div>
+      <div data-k="picker"></div>
+      <div data-k="quote"></div>
       <div data-k="menu"></div>`;
     root.querySelectorAll<HTMLElement>('[data-k]').forEach((e) => (this.el[e.dataset.k!] = e));
 
@@ -114,10 +177,21 @@ export class UI {
     });
   }
 
-  setGame(game: Game, day: number): void {
+  setGame(game: Game, day: number, info: DayInfo): void {
     this.game = game;
     this.day = day;
+    this.info = info;
+    this.nextTalk = shuffleBag(talkPool(info.upgrades), Math.random);
+    this.story = null;
+    this.closeShop();
+    this.menuOpen = false;
+    this.bellOpen = false;
+    this.knownNeeds = null;
+    this.quote = null;
+    this.pickerOpen = false;
+    this.set('picker', '');
     this.outcome = [];
+    this.summaryHidden = false;
     this.hideMenu();
     this.selectedRes = null;
     this.bubble = null;
@@ -127,19 +201,70 @@ export class UI {
     this.speed = 1;
   }
 
-  /** Dòng tiến trình hiện ở màn tổng kết (ngày tốt, hoàn thành, mở khóa). */
-  setOutcome(lines: string[]): void {
+  /** Dòng tiến trình và lời kể của chủ khách sạn hiện ở màn tổng kết. */
+  setOutcome(lines: string[], story: StoryBeat | null = null): void {
     this.outcome = lines;
+    this.story = story;
     this.sig.overlay = '';
   }
 
+  /** Cửa hàng nâng cấp của một khách sạn (mở từ màn phố hoặc màn tổng kết). */
+  openShop(hotelId: string): void {
+    this.shopHotel = hotelId;
+    this.renderShop();
+  }
+
+  /** Danh sách tình huống để thử, gom theo loại; bấm một dòng thì tình huống đó xảy ra ngay. */
+  private renderPicker(): void {
+    if (!this.pickerOpen) return this.set('picker', '');
+    const groups = new Map<string, Array<{ id: string; preview: string }>>();
+    for (const sc of this.actions.scenarioList()) groups.set(sc.group, [...(groups.get(sc.group) ?? []), sc]);
+    const body = [...groups]
+      .map(([g, items]) => `<h3>${esc(g)} <small>(${items.length})</small></h3><ul>${items.map((it) => `<li><div>${esc(it.preview)}</div><button data-trigger="${esc(it.id)}">Thử</button></li>`).join('')}</ul>`)
+      .join('');
+    this.set('picker', `<div class="overlay shop-overlay"><div class="panel shop picker"><button class="b-x" data-act="pick-close" aria-label="Đóng">×</button><h1>Chọn tình huống</h1><p class="shop-note">Bấm “Thử” để khách mang tình huống đó đến quầy ngay. Sự cố cần có khách đang ở khách sạn.</p>${body}</div></div>`);
+  }
+
+  private closeShop(): void {
+    this.shopHotel = null;
+    this.renderShop();
+  }
+
+  private renderShop(): void {
+    if (!this.shopHotel) return this.set('shop', '');
+    const v = this.actions.shopView(this.shopHotel);
+    const items = v.items
+      .map((it) => {
+        const can = !it.owned && v.money >= it.price;
+        const btn = it.owned ? '<span class="owned">Đã có</span>' : `<button class="${can ? 'primary' : ''}" data-buy="${esc(it.id)}" ${can ? '' : 'disabled'}>${vnd(it.price)}</button>`;
+        return `<li><div><b>${esc(it.name)}</b><small>${esc(it.description)}</small></div>${btn}</li>`;
+      })
+      .join('');
+    this.set('shop', `<div class="overlay shop-overlay"><div class="panel shop"><button class="b-x" data-act="shop-close" aria-label="Đóng">×</button><h1>Nâng cấp · ${esc(v.hotel)}</h1><div class="total">Tiền tích lũy: <b>${vnd(v.money)}</b></div><ul>${items}</ul><p class="shop-note">Tiền thu được mỗi ngày làm việc được cộng vào đây. Nâng cấp áp dụng từ ngày kế tiếp.</p></div></div>`);
+  }
+
   /** Màn phố: nhãn trên từng tòa, khung hướng dẫn, thẻ thông tin của tòa đang chọn. */
-  showMenu(cards: MenuCard[]): void {
+  showMenu(cards: MenuCard[], wallet = 0): void {
     this.cards = cards;
+    this.wallet = wallet;
     this.tutorial = true; // mỗi lần ra phố Lưu đều hướng dẫn lại
     this.tutorialStep = 0;
     this.root.classList.add('in-menu');
     this.renderStreet();
+  }
+
+  /** Cập nhật đồng hồ ở màn phố (gọi mỗi khung hình, chỉ chạm DOM khi phút đổi). */
+  tickStreetClock(): void {
+    const el = this.el.menu!.querySelector<HTMLElement>('[data-street-clock]');
+    const text = streetClockText();
+    if (el && el.textContent !== text) el.textContent = text;
+  }
+
+  /** Cập nhật thẻ khách sạn và tiền khi đang ở màn phố (ví dụ ca giữ lại vừa tự kết thúc). */
+  setStreetCards(cards: MenuCard[], wallet: number): void {
+    this.cards = cards;
+    this.wallet = wallet;
+    if (this.root.classList.contains('in-menu')) this.renderStreet();
   }
 
   private renderStreet(): void {
@@ -156,7 +281,9 @@ export class UI {
           <div class="meta">${c.rooms} phòng · ${esc(c.guests)}</div>
           <div class="meta">${esc(c.goal)}</div>
           <div class="meta">${esc(c.progress)} · tốt nhất: ${stars(c.bestStars)}</div>
-          ${c.state === 'locked' ? `<div class="lock">Chưa mở: ${esc(c.lockReason ?? '')}</div>` : `<button class="primary" data-play="${esc(c.id)}">Vào làm ở đây</button>`}
+          <div class="meta">Danh tiếng: ${esc(c.reputation)}</div>
+          ${c.note ? `<div class="meta note">${esc(c.note)}</div>` : ''}
+          ${c.state === 'locked' ? `<div class="lock">Chưa mở: ${esc(c.lockReason ?? '')}</div>` : `<button class="primary" data-play="${esc(c.id)}">Vào làm ở đây</button> <button data-shop="${esc(c.id)}">Nâng cấp</button>`}
         </div>`
       : `<div class="street-hint panel">Bấm vào một tòa khách sạn trên phố để xem thông tin.</div>`;
     const names = this.cards.map((x) => x.name);
@@ -175,7 +302,7 @@ export class UI {
           <div class="actions"><button class="primary" data-act="${last ? 'tut-ok' : 'tut-next'}">${last ? 'Bắt đầu thôi!' : 'Tiếp »'}</button>${last ? '' : '<button data-act="tut-ok">Bỏ qua</button>'}<span class="tut-dots">${story.map((_, i) => `<i class="${i === step ? 'on' : ''}"></i>`).join('')}</span></div></div></div>`
       : '';
     this.el.menu!.innerHTML = `<div class="street">
-      <div class="street-title panel"><div><h1>Luu Receptionist</h1><p>Phố khách sạn · chọn nơi làm việc hôm nay</p></div>
+      <div class="street-title panel"><div><h1>Luu Receptionist</h1><div class="street-clock" data-street-clock>${streetClockText()}</div><p>Phố khách sạn · chọn nơi làm việc hôm nay · Tiền tích lũy: <b>${vnd(this.wallet)}</b></p></div>
         <div class="street-tools">${this.tutorial ? '' : '<button data-act="tut-open" title="Nghe Lưu hướng dẫn lại">? Hướng dẫn</button>'}<button data-act="reset">Xóa tiến trình</button></div></div>
       ${tut}<div class="street-labels">${labels}</div>${card}</div>`;
   }
@@ -233,7 +360,7 @@ export class UI {
     this.set(
       'bubble',
       b.text === null
-        ? `<button class="b-x" data-act="b-close" aria-label="Đóng">×</button><div class="b-opts"><button class="primary" data-act="b-ask">Hỏi thăm</button><button class="shoo" data-act="b-shoo">Đuổi</button></div>`
+        ? `<button class="b-x" data-act="b-close" aria-label="Đóng">×</button><div class="b-opts"><button class="primary" data-act="b-ask">Hỏi thăm</button>${/^(amb|vis)-/.test(b.id) ? `<button data-act="b-treat" title="Tốn ${vnd(20_000)}">Mời nước</button>` : ''}<button class="shoo" data-act="b-shoo">Đuổi</button></div>`
         : `<div class="b-text">${b.text.startsWith('(') ? `<i style="color:var(--muted)">${esc(b.text)}</i>` : `“${esc(b.text)}”`}</div>`,
     );
     el.style.display = 'block';
@@ -253,6 +380,14 @@ export class UI {
     const btn = target.closest<HTMLElement>('button');
     if (!btn) return;
     if (btn.dataset.play) return this.actions.onPlay(btn.dataset.play);
+    if (btn.dataset.shop) return this.openShop(btn.dataset.shop);
+    if (btn.dataset.buy && this.shopHotel) {
+      const r = this.actions.onBuy(this.shopHotel, btn.dataset.buy);
+      if (!r.ok) this.toast(r.error, 'bad');
+      return this.renderShop();
+    }
+    if (btn.dataset.act === 'shop-close') return this.closeShop();
+    if (btn.dataset.act === 'shop-open' && this.info) return this.openShop(this.info.hotelId);
     if (btn.dataset.act === 'menu') return this.actions.onMenu();
     if (btn.dataset.act === 'reset') {
       if (window.confirm('Xóa toàn bộ tiến trình và mở khóa?')) this.actions.onReset();
@@ -271,9 +406,52 @@ export class UI {
     }
     const g = this.game;
     if (!g) return;
-    if (btn.dataset.act === 'street') {
-      if (!g.isOver && !window.confirm('Ca làm hôm nay chưa xong. Ra phố sẽ bỏ ca này và không tính kết quả. Vẫn ra phố?')) return;
-      return this.actions.onMenu();
+    if (btn.dataset.act === 'menu-toggle') {
+      this.menuOpen = !this.menuOpen;
+      this.bellOpen = false;
+      return;
+    }
+    if (btn.dataset.act === 'bell-toggle') {
+      this.bellOpen = !this.bellOpen;
+      this.menuOpen = false;
+      return;
+    }
+    if (btn.dataset.quote) {
+      this.quote = btn.dataset.quote;
+      this.bellOpen = false;
+      return;
+    }
+    if (btn.dataset.act === 'quote-cancel') {
+      this.quote = null;
+      return;
+    }
+    if (btn.dataset.act === 'quote-ok' && this.quote) {
+      const q = g.quoteService(this.quote);
+      const r = q ? g.assignTask(q.roomId, q.kind) : { ok: false as const, error: 'Phòng này không còn cần dịch vụ' };
+      this.quote = null;
+      return this.toast(r.ok ? `Đã giao việc ${q!.kind === 'cleaning' ? 'dọn phòng' : 'sửa chữa'} cho phòng ${q!.roomId}, phí ${vnd(q!.price)} trừ vào doanh thu.` : r.error, r.ok ? 'ok' : 'bad');
+    }
+    if (btn.dataset.act === 'pick-open' || btn.dataset.act === 'pick-close') {
+      this.menuOpen = false;
+      this.pickerOpen = btn.dataset.act === 'pick-open';
+      return this.renderPicker();
+    }
+    if (btn.dataset.trigger !== undefined) {
+      const r = this.actions.onTrigger(btn.dataset.trigger);
+      if (!r.ok) return this.toast(r.error, 'bad');
+      this.pickerOpen = false;
+      this.renderPicker();
+      return this.toast('Tình huống đã xảy ra ở quầy.', 'ok');
+    }
+    if (btn.dataset.act === 'auto') {
+      this.auto = !this.auto;
+      return;
+    }
+    if (btn.closest('.menu-pop')) this.menuOpen = false;
+    if (btn.dataset.act === 'street') return this.actions.onMenu();
+    if (btn.dataset.act === 'quit') {
+      if (!g.isOver && !window.confirm('Nghỉ việc sẽ bỏ ca đang làm và không tính kết quả. Vẫn nghỉ?')) return;
+      return this.actions.onQuit();
     }
     if (btn.dataset.act === 'toggle-left' || btn.dataset.act === 'toggle-right') {
       const side = btn.dataset.act === 'toggle-left' ? 'left' : 'right';
@@ -287,16 +465,29 @@ export class UI {
       return;
     }
     if (btn.dataset.act === 'b-ask' && this.bubble) {
-      this.bubble = { ...this.bubble, text: this.nextTalk(), until: performance.now() + 4000 };
+      this.bubble = { ...this.bubble, text: this.actions.onAsk(this.bubble.id) ?? this.nextTalk(), until: performance.now() + 4000 };
       return;
     }
-    if (btn.dataset.act === 'b-shoo' && this.bubble) {
-      const r = this.actions.onShoo(this.bubble.id);
-      if (r.ok) this.bubble = { ...this.bubble, text: shooReply(Math.random), until: performance.now() + 3500 };
+    if (btn.dataset.act === 'b-treat' && this.bubble) {
+      const r = this.actions.onTreat(this.bubble.id);
+      if (r.ok) this.bubble = { ...this.bubble, text: r.message ?? 'Cảm ơn bạn!', until: performance.now() + 3500 };
       else {
         this.toast(r.error, 'bad');
         this.bubble = null;
       }
+      return;
+    }
+    if (btn.dataset.act === 'b-shoo' && this.bubble) {
+      const r = this.actions.onShoo(this.bubble.id);
+      if (r.ok) this.bubble = { ...this.bubble, text: r.message ?? this.nextShoo(), until: performance.now() + 3500 };
+      else {
+        this.toast(r.error, 'bad');
+        this.bubble = null;
+      }
+      return;
+    }
+    if (btn.dataset.act === 'summary-close' || btn.dataset.act === 'summary-open') {
+      this.summaryHidden = btn.dataset.act === 'summary-close';
       return;
     }
     if (btn.dataset.act === 'b-close') {
@@ -337,10 +528,9 @@ export class UI {
     const g = this.game!;
     const target = g.rooms.find((r) => r.id === roomId);
     if (target && (target.status === 'dirty' || target.status === 'broken')) {
-      const kind = target.status === 'dirty' ? 'cleaning' : 'repair';
-      const r = g.assignTask(roomId, kind);
-      const label = kind === 'cleaning' ? 'dọn phòng' : 'sửa chữa';
-      return this.toast(r.ok ? `Đã giao việc ${label} cho phòng ${roomId}.` : r.error, r.ok ? 'ok' : 'bad');
+      if (g.tasks.taskFor(roomId)) return this.toast(`Phòng ${roomId} đã được giao việc, đang chờ nhân viên.`, 'bad');
+      this.quote = roomId; // báo giá trước, người chơi xác nhận mới giao việc
+      return;
     }
     if (target && (target.status === 'cleaning' || target.status === 'repairing')) {
       const left = Math.ceil(g.tasks.taskFor(roomId)?.minutesLeft ?? 0);
@@ -486,7 +676,13 @@ export class UI {
     this.setText('out', String(g.stats.checkedOut));
     this.setText('revenue', vnd(g.stats.revenue));
     this.setText('sat', String(g.satisfaction));
+    this.renderBell(g);
+    if (this.info) this.setText('rep', `${reputationLabel(this.info.reputation)} (${this.info.reputation})`);
     this.setText('left', String(g.stats.left));
+    this.el.speedbox!.classList.toggle('open', this.menuOpen);
+    const autoBtn = this.root.querySelector<HTMLElement>('[data-act="auto"]')!;
+    autoBtn.classList.toggle('active', this.auto);
+    autoBtn.textContent = `Tự động làm việc: ${this.auto ? 'Bật' : 'Tắt'}`;
     this.root.querySelectorAll<HTMLElement>('[data-speed]').forEach((b) => {
       b.classList.toggle('active', Number(b.dataset.speed) === this.speed);
     });
@@ -519,7 +715,9 @@ export class UI {
 
     const cur = g.queue.current;
     const bill = g.billing;
-    if (cur && bill) {
+    if (g.isOver && this.summaryHidden) {
+      this.set('dialog', `<div><div class="who">Hết ngày</div><div class="actions"><button class="primary" data-act="summary-open">Xem tổng kết</button><button data-act="restart">Chơi ngày tiếp theo</button></div></div>`);
+    } else if (cur && bill) {
       const lines = [`${bill.nights} đêm × ${vnd(bill.nightlyRate)} = ${vnd(bill.base)}`, ...bill.charges.map((c) => `${c.label}: ${vnd(c.amount)}`)];
       this.set(
         'dialog',
@@ -563,7 +761,38 @@ export class UI {
       this.set('dialog', `<span style="color:var(--muted)">Chưa có khách ở quầy.</span>`);
     }
 
-    this.set('overlay', g.isOver ? this.summaryHtml() : '');
+    this.set('overlay', g.isOver && !this.summaryHidden ? this.summaryHtml() : '');
+  }
+
+  /** Chuông thông báo: danh sách phòng cần dọn/sửa kèm giá; có phòng mới thì rung chuông và báo. */
+  private renderBell(g: Game): void {
+    const needs = g.needsService();
+    const ids = new Set(needs.map((n) => n.roomId));
+    if (this.knownNeeds) {
+      const fresh = needs.filter((n) => !this.knownNeeds!.has(n.roomId));
+      if (fresh.length > 0) {
+        this.toast(`Phòng ${fresh.map((n) => n.roomId).join(', ')} cần ${fresh[0]!.kind === 'cleaning' ? 'dọn' : 'sửa'}.`, 'bad');
+        const bell = this.root.querySelector<HTMLElement>('.bell');
+        bell?.classList.add('ring');
+        clearTimeout(this.bellTimer);
+        this.bellTimer = window.setTimeout(() => bell?.classList.remove('ring'), 1500);
+      }
+    }
+    this.knownNeeds = ids;
+    if (this.quote && !g.quoteService(this.quote)) this.quote = null;
+    this.setText('badge', needs.length ? String(needs.length) : '');
+    const rows = needs
+      .map((n) => `<li><span><b>${esc(n.roomId)}</b> · ${ROOM_TYPE_LABEL[n.type]} · ${n.kind === 'cleaning' ? 'Chưa dọn' : 'Hỏng'}</span><button data-quote="${esc(n.roomId)}">${n.kind === 'cleaning' ? 'Dọn' : 'Sửa'} · ${vnd(n.price)}</button></li>`)
+      .join('');
+    this.set('bell', `<h4>Phòng cần dọn / sửa</h4>${rows ? `<ul>${rows}</ul>` : '<p class="empty">Không có phòng nào cần dọn hoặc sửa.</p>'}`);
+    this.el.speedbox!.classList.toggle('bell-open', this.bellOpen);
+    const q = this.quote ? g.quoteService(this.quote) : null;
+    this.set(
+      'quote',
+      q
+        ? `<div class="overlay quote-overlay"><div class="panel quote"><h2>Báo giá dịch vụ</h2><div class="q-title">${PAID_LABEL[q.kind]} ${esc(q.roomId)} <small>(${ROOM_TYPE_LABEL[q.type]})</small></div><div class="q-price">${vnd(q.price)}</div><p>Thời gian khoảng ${q.minutes} phút. Khoản này <b>trừ vào doanh thu</b> hôm nay.</p><div class="actions"><button class="primary" data-act="quote-ok">Xác nhận</button><button data-act="quote-cancel">Hủy</button></div></div></div>`
+        : '',
+    );
   }
 
   private summaryHtml(): string {
@@ -574,6 +803,7 @@ export class UI {
     const events = g.events.slice(-6);
     const row = (label: string, value: string) => `<tr><td>${label}</td><td>${value}</td></tr>`;
     return `<div class="overlay"><div class="panel summary">
+      <button class="b-x" data-act="summary-close" aria-label="Đóng" title="Đóng">×</button>
       <h1>Hết ngày</h1>
       <div class="stars" aria-label="${r.stars} sao">${stars}</div>
       <div class="total">${r.score} điểm</div>
@@ -584,10 +814,18 @@ export class UI {
         ${row('Tình huống đã xử lý', String(st.scenarios))}
         ${row('Từ chối · bỏ đi · chưa kịp phục vụ', `${st.turnedAway} · ${st.left} · ${g.unserved}`)}
         ${row('Sai sót', String(st.mistakes))}
+        ${st.serviceCost > 0 ? row('Chi phí dọn phòng và sửa chữa', `<b>−${vnd(st.serviceCost)}</b> <small>đã trừ vào doanh thu</small>`) : ''}
       </table>
       ${events.length ? `<h3>Đáng nhớ</h3><ul>${events.map((e) => `<li class="${e.kind}">${esc(e.text)}</li>`).join('')}</ul>` : ''}
       ${this.outcome.length ? `<h3>Tiến trình</h3><ul class="progress">${this.outcome.map((l) => `<li>${esc(l)}</li>`).join('')}</ul>` : ''}
-      <p><button class="primary" data-act="restart">Chơi ngày tiếp theo</button> <button data-act="menu">Ra phố</button></p>
+      ${this.storyHtml()}
+      <p><button class="primary" data-act="restart">Chơi ngày tiếp theo</button> <button data-act="shop-open">Nâng cấp</button> <button data-act="menu">Ra phố</button></p>
     </div></div>`;
+  }
+
+  private storyHtml(): string {
+    const b = this.story;
+    if (!b) return '';
+    return `<div class="story">${b.chapter ? `<div class="chapter">${esc(b.chapter)}</div>` : ''}<img class="portrait" src="${import.meta.env.BASE_URL}${portraitPath(b.owner.name, 'binh-thuong')}" alt="${esc(b.owner.name)}" /><div class="story-body"><div class="who">${esc(b.owner.name)} <small>${esc(b.owner.title)}</small></div>${b.lines.map((l) => `<p>${esc(l)}</p>`).join('')}</div></div>`;
   }
 }

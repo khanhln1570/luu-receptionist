@@ -23,6 +23,7 @@ import { KIT, bulbString, blob, cyl, lantern, leverHandle, mat, palm, rbox, topi
 import { loadModel } from './loader';
 import type { Rect } from './navigation';
 import { LOBBY_LAYOUTS, ROOM, type LobbyTheme } from './lobbyLayout';
+import { buildUpgradeProps } from './upgradeProps';
 
 interface Palette {
   wall: number;
@@ -509,7 +510,7 @@ export interface Lobby {
   dispose(): void;
 }
 
-export async function buildLobby(scene: Scene, theme: LobbyTheme = 'homestay'): Promise<Lobby> {
+export async function buildLobby(scene: Scene, theme: LobbyTheme = 'homestay', upgrades: readonly string[] = []): Promise<Lobby> {
   const root = new Group();
   const obstacles: Rect[] = [];
   root.add(buildShell(theme, obstacles));
@@ -542,6 +543,9 @@ export async function buildLobby(scene: Scene, theme: LobbyTheme = 'homestay'): 
     const b = new Box3().setFromObject(obj);
     if (b.min.y < 0.3 && b.max.y - b.min.y > 0.35) obstacles.push({ minX: b.min.x, maxX: b.max.x, minZ: b.min.z, maxZ: b.max.z });
   });
+  const props = buildUpgradeProps(theme, upgrades);
+  root.add(props.group);
+  obstacles.push(...props.obstacles);
   scene.add(root);
   return { door, obstacles, dispose: () => scene.remove(root) };
 }

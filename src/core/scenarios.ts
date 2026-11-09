@@ -25,6 +25,7 @@ export interface ScenarioOption {
 export interface Scenario {
   id: string;
   type: ScenarioType;
+  guest?: string; // tên cố định của người đến (ví dụ chủ khách sạn); không có thì khách ngẫu nhiên
   lines: string[];
   options: ScenarioOption[];
 }
