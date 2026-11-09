@@ -1,0 +1,73 @@
+{
+  "id": "resort-bien-xanh",
+  "name": "ANIA Resort Villa",
+  "description": "Resort 5 sao 38 phòng, khách đông, đòi hỏi cao, hay đặt trùng và khiếu nại. Nhân viên đông nhưng việc cũng nhiều.",
+  "lobby": "resort",
+  "unlock": {
+    "requires": "khach-san-hoa-mai"
+  },
+  "goal": {
+    "days": 3,
+    "minStars": 3
+  },
+  "roomGroups": [
+    {
+      "floor": 1,
+      "type": "don",
+      "count": 10,
+      "price": 400000,
+      "occupied": 3,
+      "dirty": 1
+    },
+    {
+      "floor": 2,
+      "type": "don",
+      "count": 6,
+      "price": 420000,
+      "broken": 1
+    },
+    {
+      "floor": 2,
+      "type": "doi",
+      "count": 6,
+      "price": 650000,
+      "occupied": 2
+    },
+    {
+      "floor": 3,
+      "type": "doi",
+      "count": 8,
+      "price": 700000,
+      "occupied": 2,
+      "dirty": 1
+    },
+    {
+      "floor": 3,
+      "type": "vip",
+      "count": 2,
+      "price": 1500000
+    },
+    {
+      "floor": 4,
+      "type": "vip",
+      "count": 6,
+      "price": 1800000,
+      "occupied": 2
+    }
+  ],
+  "staff": {
+    "housekeeping": 4,
+    "maintenance": 2
+  },
+  "difficulty": {
+    "guestsPerDay": [
+      12,
+      15
+    ],
+    "patienceMinutes": 20,
+    "walkInRate": 0.3,
+    "incidentRate": 0.8,
+    "overbookingRate": 0.15,
+    "specialRate": 0.15
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "id": "khach-san-hoa-mai",
+  "name": "Golden Bay",
+  "description": "Khách sạn 3 sao, 20 phòng đủ ba hạng, có thêm khách vãng lai, sự cố và đặt trùng phòng.",
+  "lobby": "hotel",
+  "unlock": {
+    "requires": "nha-nghi-hoa-mai"
+  },
+  "goal": {
+    "days": 3,
+    "minStars": 3
+  },
+  "roomGroups": [
+    {
+      "floor": 1,
+      "type": "don",
+      "count": 8,
+      "price": 250000,
+      "occupied": 2,
+      "dirty": 1
+    },
+    {
+      "floor": 2,
+      "type": "don",
+      "count": 3,
+      "price": 280000,
+      "broken": 1
+    },
+    {
+      "floor": 2,
+      "type": "doi",
+      "count": 2,
+      "price": 420000,
+      "occupied": 1
+    },
+    {
+      "floor": 3,
+      "type": "doi",
+      "count": 5,
+      "price": 450000,
+      "occupied": 2
+    },
+    {
+      "floor": 3,
+      "type": "vip",
+      "count": 2,
+      "price": 900000
+    }
+  ],
+  "staff": {
+    "housekeeping": 2,
+    "maintenance": 1
+  },
+  "difficulty": {
+    "guestsPerDay": [
+      6,
+      8
+    ],
+    "patienceMinutes": 25,
+    "walkInRate": 0.3,
+    "incidentRate": 0.7,
+    "overbookingRate": 0.1,
+    "specialRate": 0.12
+  }
+}

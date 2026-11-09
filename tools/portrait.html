@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <title>Công cụ render portrait</title>
+  <style>
+    body { margin: 0; padding: 16px; background: #2b2f40; color: #eee; font-family: system-ui, sans-serif; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    #grid { display: grid; grid-template-columns: repeat(3, 200px); gap: 8px; }
+    #grid img { width: 200px; height: 200px; background: repeating-conic-gradient(#3a3f55 0 25%, #333850 0 50%) 0 0 / 20px 20px; border-radius: 8px; }
+    #grid figure { margin: 0; } figcaption { font-size: 12px; opacity: 0.7; }
+  </style>
+</head>
+<body>
+  <h1>Portrait khách (xem trước). Xuất PNG: <code>npm run portraits</code></h1>
+  <div id="grid"></div>
+  <script type="module" src="./portrait.ts"></script>
+</body>
+</html>

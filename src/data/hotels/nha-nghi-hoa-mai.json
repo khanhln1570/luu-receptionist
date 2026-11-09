@@ -1,0 +1,50 @@
+{
+  "id": "nha-nghi-hoa-mai",
+  "name": "Homestay Raon",
+  "description": "Homestay nhỏ của gia đình, ít phòng, ít khách. Chỗ tốt để làm quen công việc lễ tân.",
+  "lobby": "homestay",
+  "unlock": {
+    "requires": null
+  },
+  "goal": {
+    "days": 2,
+    "minStars": 3
+  },
+  "roomGroups": [
+    {
+      "floor": 1,
+      "type": "don",
+      "count": 4,
+      "price": 200000,
+      "occupied": 1
+    },
+    {
+      "floor": 2,
+      "type": "don",
+      "count": 2,
+      "price": 220000
+    },
+    {
+      "floor": 2,
+      "type": "doi",
+      "count": 2,
+      "price": 350000,
+      "occupied": 1
+    }
+  ],
+  "staff": {
+    "housekeeping": 1,
+    "maintenance": 1
+  },
+  "difficulty": {
+    "guestsPerDay": [
+      4,
+      5
+    ],
+    "patienceMinutes": 35,
+    "walkInRate": 0.2,
+    "incidentRate": 0.4,
+    "overbookingRate": 0.05,
+    "specialRate": 0.1
+  }
+}
