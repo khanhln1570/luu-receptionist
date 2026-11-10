@@ -115,7 +115,7 @@ export class Street {
     const sun = this.sun;
     sun.position.set(5, 10, 7);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(1024, 1024);
     Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 10, bottom: -10, near: 1, far: 30 });
     this.scene.add(sun);
     this.addSky();

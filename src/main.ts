@@ -54,7 +54,7 @@ scene.add(new HemisphereLight(0xffffff, 0x8a7a66, 1.1));
 const sun = new DirectionalLight(0xfff1dc, 1.6);
 sun.position.set(6, 10, 4);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(1024, 1024);
 Object.assign(sun.shadow.camera, {
   left: -12,
   right: 12,
@@ -67,10 +67,31 @@ scene.add(sun);
 
 let street: Street | null = null;
 
+/** Độ phân giải vẽ: tối đa 1,5 lần; máy yếu / mạng lag thì tự hạ dần cho mượt, khi khỏe lại thì tăng lên. */
+const MAX_RATIO = Math.min(window.devicePixelRatio, 1.5);
+let ratio = MAX_RATIO;
+let slowFrames = 0;
+let fastFrames = 0;
+let frameCount = 0;
+function adaptQuality(rawDt: number): void {
+  if (document.hidden || rawDt > 0.5) return; // bỏ qua lúc tab ẩn / treo
+  slowFrames += rawDt > 1 / 28 ? 1 : 0;
+  fastFrames += rawDt < 1 / 50 ? 1 : 0;
+  if (++frameCount < 90) return;
+  if (slowFrames > 60 && ratio > 0.6) {
+    ratio = Math.max(0.6, ratio - 0.25);
+    resize();
+  } else if (fastFrames > 80 && ratio < MAX_RATIO) {
+    ratio = Math.min(MAX_RATIO, ratio + 0.25);
+    resize();
+  }
+  slowFrames = fastFrames = frameCount = 0;
+}
+
 function resize(): void {
   const w = window.innerWidth;
   const h = window.innerHeight;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(ratio);
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
@@ -500,8 +521,10 @@ function stepWorldClock(dt: number): void {
 
 let last = performance.now();
 renderer.setAnimationLoop((now) => {
-  const dt = Math.min((now - last) / 1000, 0.25); // tránh nhảy cóc khi tab bị ẩn
+  const rawDt = (now - last) / 1000;
+  const dt = Math.min(rawDt, 0.25); // tránh nhảy cóc khi tab bị ẩn
   last = now;
+  adaptQuality(rawDt);
   stepWorldClock(dt);
   if (pendingQuit) {
     pendingQuit = false;
