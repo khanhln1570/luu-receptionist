@@ -61,12 +61,36 @@ export function randomName(rng: Rng): string {
   return `${rng.pick(HO)} ${rng.pick(DEM)} ${rng.pick(TEN)}`;
 }
 
+/** Các đợt khách trong ngày (tỉ lệ trong khoảng mở cửa → khách cuối) và trọng số: nhận phòng dồn vào chiều, tối có khách vãng lai. */
+const RUSHES: readonly (readonly [number, number, number])[] = [
+  [0.0, 0.2, 1], // sáng: đa phần trả phòng, ít khách mới
+  [0.3, 0.55, 3], // đầu giờ nhận phòng: đông nhất
+  [0.55, 0.8, 2], // chiều muộn
+  [0.8, 1.0, 2], // tối: khách vãng lai
+];
+const BURST_CHANCE = 0.35; // đoàn đi cùng: khách đến sát nhau vài phút
+
+/** Giờ đến của `count` khách: rơi vào các đợt cao điểm, và đôi khi hai ba khách đến liền nhau. Trả về đã sắp xếp. */
+function arrivalTimes(rng: Rng, count: number, first: number, last: number): number[] {
+  const span = last - first;
+  const times: number[] = [];
+  while (times.length < count) {
+    const [a, b] = rng.weighted(RUSHES.map((r) => [r, r[2]] as const));
+    const t = rng.int(first + Math.floor(span * a), first + Math.floor(span * b));
+    times.push(t);
+    if (times.length < count && rng.chance(BURST_CHANCE)) {
+      times.push(Math.min(last, t + rng.int(2, 8)));
+    }
+  }
+  return times.sort((x, y) => x - y);
+}
+
 /** Sinh lịch khách và đặt phòng cho một ngày. Cùng seed và tham số thì cho cùng kết quả. */
 export function generateDay(rng: Rng, params: DayParams): DaySchedule {
   const count = rng.int(params.guestsPerDay[0], params.guestsPerDay[1]);
   // Khách đến muộn nhất 60 phút trước giờ đóng cửa để còn kịp phục vụ.
   const lastArrival = Math.max(params.openMinute, params.closeMinute - 60);
-  const times = Array.from({ length: count }, () => rng.int(params.openMinute, lastArrival)).sort((a, b) => a - b);
+  const times = arrivalTimes(rng, count, params.openMinute, lastArrival);
 
   const arrivals: Arrival[] = [];
   const reservations: Reservation[] = [];

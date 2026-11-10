@@ -38,13 +38,13 @@
   },
   "difficulty": {
     "guestsPerDay": [
-      4,
-      5
+      7,
+      9
     ],
     "patienceMinutes": 35,
     "walkInRate": 0.2,
-    "incidentRate": 0.4,
+    "incidentRate": 0.5,
     "overbookingRate": 0.2,
-    "specialRate": 0.45
+    "specialRate": 0.5
   }
 }
